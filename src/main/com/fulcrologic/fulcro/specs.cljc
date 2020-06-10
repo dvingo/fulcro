@@ -14,7 +14,9 @@
 (>def :com.fulcrologic.fulcro.algorithms.tx-processing/created inst?)
 (>def :com.fulcrologic.fulcro.algorithms.tx-processing/started inst?)
 (>def :com.fulcrologic.fulcro.algorithms.tx-processing/finished inst?)
-(>def :com.fulcrologic.fulcro.algorithms.tx-processing/tx vector?)
+(>def :com.fulcrologic.fulcro.algorithms.tx-processing/tx
+  "The actual fulcro mutation vector - eql"
+  vector?)
 (>def :com.fulcrologic.fulcro.algorithms.tx-processing/abort-id any?)
 (>def :com.fulcrologic.fulcro.algorithms.tx-processing/options (s/keys
                                                                  :opt [:com.fulcrologic.fulcro.algorithms.tx-processing/abort-id]

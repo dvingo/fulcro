@@ -10,7 +10,7 @@
     [com.fulcrologic.fulcro.algorithms.tempid :as tempid]
     [com.fulcrologic.fulcro.algorithms.denormalize :as fdn]
     [com.fulcrologic.fulcro.algorithms.do-not-use :as futil]
-    [com.fulcrologic.fulcro.algorithms.scheduling :as sched :refer [schedule!]]
+    [com.fulcrologic.fulcro.algorithms.scheduling :refer [schedule!]]
     [com.fulcrologic.fulcro.mutations :as m]
     [com.fulcrologic.fulcro.components :as comp]
     [com.fulcrologic.fulcro.specs]
@@ -20,6 +20,21 @@
     [edn-query-language.core :as eql]
     [taoensso.encore :as enc]
     [taoensso.timbre :as log]))
+
+(comment
+  "
+  Questions I have:
+  What is a tx-node? - What does it represent
+
+
+  What does activation mean?
+
+  What is stored in the fulcro application map itself versus in the runtime atom?
+
+
+Are the queues actually queues or are they vectors? It appears that they are vectors.
+
+  ")
 
 (declare schedule-activation! process-queue! remove-send!)
 
@@ -144,7 +159,7 @@
   if the remote itself throws exceptions."
   [app send-node remote-name]
   [:com.fulcrologic.fulcro.application/app ::send-node :com.fulcrologic.fulcro.application/remote-name => any?]
-  (enc/if-let [remote    (get (app->remotes app) remote-name)
+  (enc/if-let [remote (get (app->remotes app) remote-name)
                transmit! (get remote :transmit!)]
     (try
       (inspect/ilet [tx (futil/ast->query (::ast send-node))]
@@ -191,6 +206,14 @@
     new-send-queues))
 
 (>defn tx-node
+  "Constructs a transaction node map.
+  Contains:
+  - :c.f.f.a.tx-processing/id
+  - :c.f.f.a.tx-processing/created
+  - :c.f.f.a.tx-processing/options
+  - :c.f.f.a.tx-processing/tx
+  - :c.f.f.a.tx-processing/elements
+  "
   ([tx]
    [::tx => ::tx-node]
    (tx-node tx {}))
@@ -217,14 +240,17 @@
       ::elements elements})))
 
 (>defn build-env
-  ([app {::keys [options] :as tx-node} addl]
+  "Creates the map which is passed to all transactions, by convention this is called `env`."
+  ([app {::keys [options]} addl]
    [:com.fulcrologic.fulcro.application/app ::tx-node map? => map?]
+
    (let [{:keys [ref component]} options]
      (cond-> (merge addl {:state (-> app :com.fulcrologic.fulcro.application/state-atom)
                           :app   app})
        options (assoc ::options options)
        ref (assoc :ref ref)
        component (assoc :component component))))
+
   ([app {:keys [::options] :as tx-node}]
    [:com.fulcrologic.fulcro.application/app ::tx-node => map?]
    (build-env app tx-node {})))
@@ -273,8 +299,12 @@
     (process-queue! app)))
 
 (>defn schedule-activation!
-  "Schedule activation of submitted transactions.  The default implementation copies all submitted transactions onto
-   the active queue and immediately does an active queue processing step.  If `tm` is not supplied (in ms) it defaults to 10ms."
+  "Schedule activation of submitted transactions.
+
+   The default implementation copies all submitted transactions onto
+   the active queue and immediately does an active queue processing step.
+
+   If `tm` is not supplied (in ms) it defaults to 0ms."
   ([app tm]
    [:com.fulcrologic.fulcro.application/app int? => any?]
    (schedule! app ::activation-scheduled? activate-submissions! tm))
@@ -701,9 +731,11 @@
    * Runs the optimistic side of the mutation(s)
    * IF (and only if) one or more of the mutations has more sections than just an `action` then it submits the mutation to the normal transaction queue,
      but with the optimistic part already done.
-   * This functions *does not* queue a render refresh (though if the normal transaction queue is updated, it will queue tx remote processing, which will trigger a UI refresh).
+   * This function *does not* queue a render refresh; although, if the normal transaction queue is updated, it will queue
+     tx remote processing which will trigger a UI refresh.
 
-   If you pass it an on-screen instance that has a query and ident, then this function tunnel updated UI props synchronously to that
+   If you pass it an on-screen instance that has a query and ident,
+   then this function tunnels updated UI props synchronously to that
    component so it can refresh immediately and avoid DOM input issues.
 
    Returns the new component props or the final state map if no component was used in the transaction.
@@ -772,16 +804,27 @@
   "
   ([app tx]
    [:com.fulcrologic.fulcro.application/app ::tx => ::id]
+   (log/info "IN DEFAULT TX: " tx)
    (default-tx! app tx {}))
-  ([{:com.fulcrologic.fulcro.application/keys [runtime-atom] :as app} tx {:keys [synchronous?] :as options}]
+  ([{:com.fulcrologic.fulcro.application/keys [runtime-atom] :as app}
+    tx
+    {:keys [synchronous?] :as options}]
    [:com.fulcrologic.fulcro.application/app ::tx ::options => ::id]
+   ;(log/info "IN DEFAULT TX2: " tx)
+   (println "IN DEFAULT TX2: " tx)
    (if synchronous?
-     (transact-sync! app tx options)
      (do
+       (log/info "SYNCronous tx: " tx)
+       (transact-sync! app tx options))
+     (do
+       (log/info "schedule-activation!")
        (schedule-activation! app)
        (let [{:keys [refresh only-refresh ref] :as options} (merge {:optimistic? true} options)
              follow-on-reads (into #{} (filter #(or (keyword? %) (eql/ident? %)) tx))
              node            (tx-node tx options)
+             _ (tap> "here")
+             _ (tap> node)
+
              accumulate      (fn [r items] (into (set r) items))
              refresh         (cond-> (set refresh)
                                (seq follow-on-reads) (into follow-on-reads)

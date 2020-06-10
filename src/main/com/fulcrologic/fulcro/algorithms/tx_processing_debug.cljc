@@ -5,23 +5,30 @@
     [clojure.string :as str]
     [clojure.pprint :refer [pprint]]))
 
+(defn txr [k] (keyword "com.fulcrologic.fulcro.algorithms.tx-processing" k))
+
+(defn strks [n & ks]
+  (str/join "," (map (fn [k] (str (some-> k name) " " (get n k))) ks)))
+
+(defn prtxnode [n]
+  (println (strks n (txr :id) :com.fulcrologic.fulcro.algorithms.tx-processing/tx))
+  (doseq [{:com.fulcrologic.fulcro.algorithms.tx-processing/keys [idx results dispatch] :as ele}
+          (:com.fulcrologic.fulcro.algorithms.tx-processing/elements n)]
+    (println "  Element " idx)
+    (println "  " (strks ele :com.fulcrologic.fulcro.algorithms.tx-processing/started? :com.fulcrologic.fulcro.algorithms.tx-processing/complete? :com.fulcrologic.fulcro.algorithms.tx-processing/original-ast-node))
+    (println "  Dispatch: " (with-out-str (pprint dispatch)))
+    (println "  Results: " (with-out-str (pprint results)))))
+
+;; submission queue
+;; active queue
+;; send queues <-- plural
 (defn tx-status!
   "Debugging function. Shows the current transaction queues with a summary of their content."
   [{:com.fulcrologic.fulcro.application/keys [runtime-atom] :as app}]
   (let [{:com.fulcrologic.fulcro.algorithms.tx-processing/keys [submission-queue active-queue send-queues]} @runtime-atom
-        strks    (fn [n & ks]
-                   (str/join "," (map (fn [k] (str (some-> k name) " " (get n k))) ks)))
-        prtxnode (fn [n]
-                   (println (strks n :com.fulcrologic.fulcro.algorithms.tx-processing/id :com.fulcrologic.fulcro.algorithms.tx-processing/tx))
-                   (doseq [{:com.fulcrologic.fulcro.algorithms.tx-processing/keys [idx results dispatch] :as ele}
-                           (:com.fulcrologic.fulcro.algorithms.tx-processing/elements n)]
-                     (println "  Element " idx)
-                     (println "  " (strks ele :com.fulcrologic.fulcro.algorithms.tx-processing/started? :com.fulcrologic.fulcro.algorithms.tx-processing/complete? :com.fulcrologic.fulcro.algorithms.tx-processing/original-ast-node))
-                     (println "  Dispatch: " (with-out-str (pprint dispatch)))
-                     (println "  Results: " (with-out-str (pprint results)))))
-        prsend   (fn [s]
-                   (println "NODE:")
-                   (println "  " (strks s :com.fulcrologic.fulcro.algorithms.tx-processing/ast :com.fulcrologic.fulcro.algorithms.tx-processing/active?)))]
+        prsend (fn [s]
+                 (println "NODE:")
+                 (println "  " (strks s :com.fulcrologic.fulcro.algorithms.tx-processing/ast :com.fulcrologic.fulcro.algorithms.tx-processing/active?)))]
     (println "================================================================================")
     (println "Submission Queue:")
     (doseq [n submission-queue]

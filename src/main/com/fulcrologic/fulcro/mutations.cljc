@@ -43,18 +43,18 @@
   #?(:cljs (:require-macros com.fulcrologic.fulcro.mutations))
   (:require
     #?(:clj [cljs.analyzer :as ana])
+    [clojure.spec.alpha :as s]
+    [clojure.string :as str]
+    [com.fulcrologic.fulcro.algorithms.data-targeting :as targeting]
+    [com.fulcrologic.fulcro.algorithms.lookup :as ah]
+    [com.fulcrologic.fulcro.algorithms.merge :as merge]
+    [com.fulcrologic.fulcro.algorithms.tempid :as tempid]
     [com.fulcrologic.fulcro.components :as comp]
     [com.fulcrologic.fulcro.dom.events :as evt]
     [com.fulcrologic.guardrails.core :refer [>def >defn =>]]
     [edn-query-language.core :as eql]
-    [taoensso.timbre :as log]
     [taoensso.encore :as enc]
-    [clojure.spec.alpha :as s]
-    [com.fulcrologic.fulcro.algorithms.data-targeting :as targeting]
-    [com.fulcrologic.fulcro.algorithms.merge :as merge]
-    [com.fulcrologic.fulcro.algorithms.lookup :as ah]
-    [com.fulcrologic.fulcro.algorithms.tempid :as tempid]
-    [clojure.string :as str])
+    [taoensso.timbre :as log])
   #?(:clj
      (:import (clojure.lang IFn))))
 
@@ -108,8 +108,8 @@
   [::env => ::env]
   (let [{:keys [app result]} env]
     (enc/when-let [global-error-action (ah/app-algorithm app :global-error-action)
-                   remote-error?       (ah/app-algorithm app :remote-error?)
-                   _                   (remote-error? result)]
+                   remote-error? (ah/app-algorithm app :remote-error?)
+                   _ (remote-error? result)]
       (global-error-action env))
     env))
 
@@ -425,6 +425,7 @@
 
 #?(:clj
    (defn defmutation* [macro-env args]
+     (println "ARGS to defmutation: " args)
      (let [conform!       (fn [element spec value]
                             (when-not (s/valid? spec value)
                               (throw (ana/error macro-env (str "Syntax error in " element ": " (s/explain-str spec value)))))
@@ -437,11 +438,15 @@
                                     (let [action? (str/ends-with? (str handler-name) "action")]
                                       (into acc
                                         (if action?
-                                          [(keyword (name handler-name)) `(fn ~handler-name ~handler-args
-                                                                            (binding [comp/*after-render* true]
-                                                                              ~@handler-body)
-                                                                            nil)]
-                                          [(keyword (name handler-name)) `(fn ~handler-name ~handler-args ~@handler-body)]))))
+
+                                          [(keyword (name handler-name))
+                                           `(fn ~handler-name ~handler-args
+                                              (binding [comp/*after-render* true]
+                                                ~@handler-body)
+                                              nil)]
+
+                                          [(keyword (name handler-name))
+                                           `(fn ~handler-name ~handler-args ~@handler-body)]))))
                             []
                             sections)
            ks             (into #{} (filter keyword?) handlers)
@@ -518,3 +523,9 @@
        '([sym docstring? arglist handlers])} defmutation
      [& args]
      (defmutation* &env args)))
+
+(comment
+  (macroexpand '(defmutation my-mutation [_]
+                  (action [_]
+                    (println "body"))))
+  )

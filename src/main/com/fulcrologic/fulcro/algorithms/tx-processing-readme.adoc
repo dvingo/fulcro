@@ -79,3 +79,100 @@ Send Q Rmt2 |    (g)| |       |  ...
             +-------+ +-------+
 
 -----
+
+----
+Dan's notes:
+
+
+
+As far as I understand things; the entrypoint of a transaction is components/transact!
+
+(ns com.fulcrologic.fulcro.components)
+
+The tx! algorithm is pulled off of the application map:
+
+(let [tx!     (ah/app-algorithm app :tx!)
+
+Some options are setup for the transaction and then tx! is invoked.
+
+This invokes `tx!`: (tx! app tx options)
+
+when you construct a fulcro application tx! is set to com.fulcrologic.fulcro.algorithms.tx-processing/default-tx!
+by default.
+
+If it's syncrhonous then this is invoked:
+
+(transact-sync! app tx options)
+
+
+otherwise :
+
+(schedule-activation! app)
+
+Then a new Transaction node (a spec'd map) is constructed
+
+             node            (tx-node tx options)
+
+tx is the vector passed to transact!
+
+
+Then the tx-node is added to the end of the submission-queue via conj-vec
+
+(swap! runtime-atom
+  (fn [s]
+    (cond-> (update s ::submission-queue (fn [v n] (conj (vec v) n)) node)
+       ;; refresh sets are cumulative because rendering is debounced
+       (seq refresh) (update :com.fulcrologic.fulcro.application/to-refresh accumulate refresh)
+       (seq only-refresh) (update :com.fulcrologic.fulcro.application/only-refresh accumulate only-refresh))))
+
+
+
+default-tx ends there - returning the id of the tx-node (a newly constructed uuid)
+
+The rest of the work picks up in schedule-activation! which calls com.fulcrologic.fulcro.algorithms.scheduling/schedule!
+with a delay of 0ms:
+
+   (schedule! app ::activation-scheduled? activate-submissions! tm))
+
+(defn schedule!
+
+  "Schedule the processing of a specific action in the runtime atom. This is a no-op if the item is already scheduled.
+  When the timeout arrives it runs the given action and sets the given flag back to false.
+
+  - `scheduled-key` - The runtime flag that tracks scheduling for the processing.
+  - `action` - The function to run when the scheduled time comes.
+  - `tm` - Number of ms to delay (default 0)."
+
+  [app scheduled-key action tm]
+   [:com.fulcrologic.fulcro.application/app keyword? fn? int? => any?]
+   (let [{:com.fulcrologic.fulcro.application/keys [runtime-atom]} app]
+     (when-not (get @runtime-atom scheduled-key)
+       (swap! runtime-atom assoc scheduled-key true)
+       (defer
+         (fn [] (swap! runtime-atom assoc scheduled-key false)
+                (action app))
+         tm))))
+
+(defer just calls js/setTimeout - it's wrapped for cljc support.
+
+
+The next piece is what is action in schedule! ?
+
+
+It is this:
+
+(>defn activate-submissions!
+  "Activate all of the transactions that have been submitted since the last activation. After the items are activated
+  a single processing step will run for the active queue.
+
+  Activation can be blocked by the tx-node options for things like waiting for the next render frame."
+  [{:keys [:com.fulcrologic.fulcro.application/runtime-atom] :as app}]
+  [:com.fulcrologic.fulcro.application/app => any?]
+
+  (let [{blocked true ready false} (group-by (comp boolean :after-render? ::options) (::submission-queue @runtime-atom))
+        dispatched-nodes (mapv #(dispatch-elements % (build-env app %) m/mutate) ready)]
+    (swap! runtime-atom (fn [a]
+                          (-> a
+                            (update ::active-queue #(reduce conj % dispatched-nodes))
+                            (assoc ::submission-queue (vec blocked)))))
+    (process-queue! app)))

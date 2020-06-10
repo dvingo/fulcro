@@ -16,7 +16,7 @@
   `k` - the algorithm to obtain. This can be a plain keyword or a symbol of the algorithm desired.
 
   Supported algorithms that can be obtained/overridden in Fulcro (check the source of app/fulcro-app if you suspect this is out
-  of date, which is likely is):
+  of date, which it likely is):
 
   - `:global-eql-transform` - A `(fn [tx] tx')` that is applied to all outgoing requests (when using default `tx!`).
      Defaults to stripping things like `:ui/*` and form state config joins.

@@ -70,15 +70,15 @@
   ([obj kvs default]
    #?(:clj (get-in obj kvs default)
       :cljs
-           (let [ks (mapv (fn [k] (some-> k name)) kvs)]
-             (or (apply gobj/getValueByKeys obj ks) default)))))
+      (let [ks (mapv (fn [k] (some-> k name)) kvs)]
+        (or (apply gobj/getValueByKeys obj ks) default)))))
 
 (defn isoget
   "Like get, but for js objects, and in CLJC. In clj, it is just `get`. In cljs it is
   `gobj/get`."
   ([obj k] (isoget obj k nil))
   ([obj k default]
-   #?(:clj  (get obj k default)
+   #?(:clj (get obj k default)
       :cljs (or (gobj/get obj (some-> k (name))) default))))
 
 
@@ -113,7 +113,7 @@
   #?(:cljs {:tag boolean})
   [x]
   (if-not (nil? x)
-    #?(:clj  (true? (:fulcro$isComponent x))
+    #?(:clj (true? (:fulcro$isComponent x))
        :cljs (true? (gobj/get x "fulcro$isComponent")))
     false))
 
@@ -127,7 +127,7 @@
   "Returns true if the argument is a component class."
   #?(:cljs {:tag boolean})
   [x]
-  #?(:clj  (boolean (and (map? x) (::component-class? x)))
+  #?(:clj (boolean (and (map? x) (::component-class? x)))
      :cljs (boolean (gobj/containsKey x "fulcro$class"))))
 
 (>def ::component-class component-class?)
@@ -213,7 +213,7 @@
   "Returns the component type, regardless of whether the component has been
    mounted"
   [x]
-  #?(:clj  (if (component-class? x) x (:fulcro$class x))
+  #?(:clj (if (component-class? x) x (:fulcro$class x))
      :cljs (or (gobj/get x "type") (type x))))
 
 (defn get-class
@@ -254,7 +254,7 @@
     (cond
       (component-instance? x) (get-raw-react-prop x :fulcro$app)
       (fulcro-app? x) x
-      #?(:clj  (instance? IDeref x)
+      #?(:clj (instance? IDeref x)
          :cljs (satisfies? IDeref x)) (any->app (deref x)))))
 
 (defn raw->newest-props
@@ -262,7 +262,7 @@
   local state is leveraged as a communication mechanism of updated props directly to a component that has an ident.
   This function will return the correct version of props based on timestamps."
   [raw-props raw-state]
-  #?(:clj  raw-props
+  #?(:clj raw-props
      :cljs (let [next-props (gobj/get raw-props "fulcro$value")
                  opt-props  (gobj/get raw-state "fulcro$value")]
              (newer-props next-props opt-props))))
@@ -291,13 +291,13 @@
      ([handler check-for-fresh-props-in-state?]
       #?(:clj (fn [& args] (apply handler args))
          :cljs
-              (fn [raw-props raw-state]
-                (this-as this
-                  (let [props (if check-for-fresh-props-in-state?
-                                (raw->newest-props raw-props raw-state)
-                                (gobj/get raw-props "fulcro$props"))
-                        state (gobj/get raw-state "fulcro$state")]
-                    (handler this props state)))))))
+         (fn [raw-props raw-state]
+           (this-as this
+             (let [props (if check-for-fresh-props-in-state?
+                           (raw->newest-props raw-props raw-state)
+                           (gobj/get raw-props "fulcro$props"))
+                   state (gobj/get raw-state "fulcro$state")]
+               (handler this props state)))))))
    (static-wrap-props-state-handler
      [handler]
      #?(:clj (fn [& args] (apply handler args))
@@ -371,13 +371,13 @@
      ([handler check-for-fresh-props-in-state?]
       #?(:clj #(handler %1)
          :cljs
-              (fn [raw-props]
-                (this-as this
-                  (let [raw-state (.-state this)
-                        props     (if check-for-fresh-props-in-state?
-                                    (raw->newest-props raw-props raw-state)
-                                    (gobj/get raw-props "fulcro$props"))]
-                    (handler this props)))))))
+         (fn [raw-props]
+           (this-as this
+             (let [raw-state (.-state this)
+                   props     (if check-for-fresh-props-in-state?
+                               (raw->newest-props raw-props raw-state)
+                               (gobj/get raw-props "fulcro$props"))]
+               (handler this props)))))))
 
    (wrap-base-render [render]
      #?(:clj (fn [& args]
@@ -462,7 +462,7 @@
          (gobj/extend (.-prototype cls) js/React.Component.prototype js-instance-props
            #js {"fulcro$options" options})
          (gobj/extend cls (clj->js statics) #js {"fulcro$options" options})
-         (gobj/set cls "fulcro$registryKey" fqkw)           ; done here instead of in extend (clj->js screws it up)
+         (gobj/set cls "fulcro$registryKey" fqkw) ; done here instead of in extend (clj->js screws it up)
          (register-component! fqkw cls)))))
 
 (defn add-hook-options!
@@ -547,7 +547,7 @@
 (defn mounted?
   "Returns true if the given component instance is mounted on the DOM."
   [this]
-  #?(:clj  false
+  #?(:clj false
      :cljs (gobj/get this "fulcro$mounted" false)))
 
 (defn set-state!
@@ -673,7 +673,7 @@
 (defn- get-query-id
   "Get the query id that is cached in the component's props."
   [component]
-  (get-raw-react-prop component #?(:clj  :fulcro$queryid
+  (get-raw-react-prop component #?(:clj :fulcro$queryid
                                    :cljs "fulcro$queryid")))
 
 (defn get-query-by-id [state-map class queryid]
@@ -931,9 +931,15 @@
    (when-let [app (any->app app-or-component)]
      (let [tx!     (ah/app-algorithm app :tx!)
            options (cond-> options
-                     (and (not (contains? options :after-render?)) (true? *after-render*)) (assoc :after-render? true)
-                     (and (nil? (:ref options)) (has-ident? app-or-component)) (assoc :ref (get-ident app-or-component))
-                     (and (nil? (:component options)) (component-instance? app-or-component)) (assoc :component app-or-component))]
+                     (and (not (contains? options :after-render?))
+                       (true? *after-render*))
+                     (assoc :after-render? true)
+
+                     (and (nil? (:ref options)) (has-ident? app-or-component))
+                     (assoc :ref (get-ident app-or-component))
+
+                     (and (nil? (:component options)) (component-instance? app-or-component))
+                     (assoc :component app-or-component))]
        (tx! app tx options))))
   ([app-or-comp tx]
    (transact! app-or-comp tx {})))
@@ -1141,15 +1147,15 @@
   those and return a new version."
   ([f]
    (fn [cls raw-props]
-     #?(:clj  (update raw-props :fulcro$extra_props (partial f cls))
+     #?(:clj (update raw-props :fulcro$extra_props (partial f cls))
         :cljs (let [existing (or (gobj/get raw-props "fulcro$extra_props") {})
                     new      (f cls existing)]
                 (gobj/set raw-props "fulcro$extra_props" new)
                 raw-props))))
   ([handler f]
    (fn [cls raw-props]
-     #?(:clj  (let [props (update raw-props :fulcro$extra_props (partial f cls))]
-                (handler cls props))
+     #?(:clj (let [props (update raw-props :fulcro$extra_props (partial f cls))]
+               (handler cls props))
         :cljs (let [existing (or (gobj/get raw-props "fulcro$extra_props") {})
                     new      (f cls existing)]
                 (gobj/set raw-props "fulcro$extra_props" new)

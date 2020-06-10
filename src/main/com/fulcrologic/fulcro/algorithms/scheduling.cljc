@@ -34,7 +34,8 @@
        (swap! runtime-atom assoc scheduled-key true)
        (defer (fn []
                 (swap! runtime-atom assoc scheduled-key false)
-                (action app)) tm))))
+                (action app))
+         tm))))
   ([app scheduled-key action]
    [:com.fulcrologic.fulcro.application/app keyword? fn? => any?]
    (schedule! app scheduled-key action 0)))
