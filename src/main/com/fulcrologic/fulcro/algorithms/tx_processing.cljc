@@ -207,7 +207,12 @@ Are the queues actually queues or are they vectors? It appears that they are vec
 
 (>defn tx-node
   "Constructs a transaction node map.
-  Contains:
+
+  tx - The eql transaction vector.
+  options - map of  {:abort-id}
+
+
+  Output map contains:
   - :c.f.f.a.tx-processing/id
   - :c.f.f.a.tx-processing/created
   - :c.f.f.a.tx-processing/options
@@ -239,8 +244,22 @@ Are the queues actually queues or are they vectors? It appears that they are vec
       ::tx       tx
       ::elements elements})))
 
+(comment
+  (tx-node '[(hello-world)] {:my-opt 5})
+  (tx-node '[(hello-world) (another-mutation {:arg 2})] {:my-opt 5})
+  (tx-node '[(hello-world)] {:my-opt 5})
+ )
+
+
 (>defn build-env
-  "Creates the map which is passed to all transactions, by convention this is called `env`."
+  "Creates the map which is passed to all transactions, by convention this is called `env`.
+  Contains at least :state and :app
+
+  May also contain:
+  ref
+  component
+  ::tx-processing/options
+  "
   ([app {::keys [options]} addl]
    [:com.fulcrologic.fulcro.application/app ::tx-node map? => map?]
 
@@ -256,8 +275,8 @@ Are the queues actually queues or are they vectors? It appears that they are vec
    (build-env app tx-node {})))
 
 (>defn dispatch-elements
-  "Run through the elements on the given tx-node and do the side-effect-free dispatch. This generates the dispatch map
-  of things to do on that node."
+  "Run through the elements on the given tx-node and do the side-effect-free dispatch.
+   This generates the dispatch map of things to do on that node."
   [tx-node env dispatch-fn]
   [::tx-node map? any? => ::tx-node]
   (let [do-dispatch  (fn run* [env]
@@ -773,6 +792,12 @@ Are the queues actually queues or are they vectors? It appears that they are vec
         (log/warn "Synchronous transaction was submitted on the app or a component without an ident. No UI refresh will happen.")))
     @resulting-node-id))
 
+
+(comment
+  (:children (eql/query->ast '[(my-ns2/my-mutation1 {:arg 1 }) (my-ns/second-mutation )]))
+
+  )
+
 (defn default-tx!
   "Default (Fulcro-2 compatible) transaction submission. The options map can contain any additional options
   that might be used by the transaction processing (or UI refresh).
@@ -818,7 +843,9 @@ Are the queues actually queues or are they vectors? It appears that they are vec
        (transact-sync! app tx options))
      (do
        (log/info "schedule-activation!")
+
        (schedule-activation! app)
+
        (let [{:keys [refresh only-refresh ref] :as options} (merge {:optimistic? true} options)
              follow-on-reads (into #{} (filter #(or (keyword? %) (eql/ident? %)) tx))
              node            (tx-node tx options)

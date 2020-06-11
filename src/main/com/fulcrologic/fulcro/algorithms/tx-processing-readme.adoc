@@ -80,9 +80,7 @@ Send Q Rmt2 |    (g)| |       |  ...
 
 -----
 
-----
-Dan's notes:
-
+== Dan's notes:
 
 
 As far as I understand things; the entrypoint of a transaction is components/transact!
@@ -113,7 +111,7 @@ Then a new Transaction node (a spec'd map) is constructed
 
              node            (tx-node tx options)
 
-tx is the vector passed to transact!
+tx is the eql vector passed to transact!
 
 
 Then the tx-node is added to the end of the submission-queue via conj-vec
@@ -156,7 +154,7 @@ with a delay of 0ms:
 (defer just calls js/setTimeout - it's wrapped for cljc support.
 
 
-The next piece is what is action in schedule! ?
+The next piece is what is action in schedule! ? - it is a fn reference passed in above to `schedule!` - in this case `activate-submissions!`
 
 
 It is this:

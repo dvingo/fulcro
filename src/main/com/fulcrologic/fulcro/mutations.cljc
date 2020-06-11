@@ -435,18 +435,21 @@
                             :sym symbol?
                             :doc (s/? string?)
                             :arglist (fn [a] (and (vector? a) (= 1 (count a))))
-                            :sections (s/* (s/or :handler ::handler)))))
+                            :sections (s/* (s/spec ::handler)))))
 
 (comment
-  (s/def :my/var  (s/cat :e even?))
-  (s/def :my/var2  (s/or :e even?))
-  (s/conform :my/var [2])
-  (s/conform :my/var2 [2])
-
+  (s/conform ::mutation-args '(hi [_]
+                                (action [_] (println "hi"))
+                                (ok-action [_] (println "OK"))
+                                (remote [_] (println "remote"))))
+  ;; s/* - returns a vector on match
+  ;; s/cat - returns a map on match
+  (s/conform (s/* ::handler) '(action [_] (println body)))
   (s/conform ::mutation-args
-    '(my-mutation [{:keys [some-thing]}] (action [_] (println body)) (refresh [_] :a-key))
-    )
-  )
+    '(my-mutation
+       [{:keys [some-thing]}]
+       (action [_] (println body))
+       (refresh [_] :a-key))))
 
 #?(:clj
    (defn defmutation* [macro-env args]
@@ -463,7 +466,7 @@
            fqsym          (if (namespace sym)
                             sym
                             (symbol (name (ns-name *ns*)) (name sym)))
-           handlers       (reduce (fn [acc [_ {:keys [handler-name handler-args handler-body]}]]
+           handlers       (reduce (fn [acc {:keys [handler-name handler-args handler-body]}]
                                     (let [action? (str/ends-with? (str handler-name) "action")]
                                       (into acc
                                         (if action?
@@ -492,6 +495,7 @@
            multimethod    `(defmethod com.fulcrologic.fulcro.mutations/mutate '~fqsym [~env-symbol]
                              (let [~(first arglist) (-> ~env-symbol :ast :params)]
                                ~method-map))]
+       ;method-map
        (if (= fqsym sym)
          multimethod
          `(do
@@ -554,8 +558,9 @@
      (defmutation* &env args)))
 
 (comment
-  (macroexpand '(defmutation my-mutation [_]
-                  (action [_]
+  (macroexpand '(defmutation my-mutation [{my-param :my-key} ]
+                  (remote [env2] true)
+                  (action [{:keys [state]}]
                     (println "body"))))
   (defmutation my-mutation [{:keys [some-thing]}]
     (action [_]
