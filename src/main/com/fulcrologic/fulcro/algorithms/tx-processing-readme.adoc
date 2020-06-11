@@ -174,3 +174,8 @@ It is this:
                             (update ::active-queue #(reduce conj % dispatched-nodes))
                             (assoc ::submission-queue (vec blocked)))))
     (process-queue! app)))
+
+== Server side
+
+So the eql of the tx is sent over the http to the server. The server eventually gets a pathom tx as the body of a POST
+request.

@@ -102,7 +102,7 @@
      env)))
 
 (>defn trigger-global-error-action!
-  "When there is a `global-error-action` defined on the application, this function will checks for errors in the given
+  "When there is a `global-error-action` defined on the application, this function will check for errors in the given
   mutation `env`. If any are found then it will call the global error action function with `env`.
 
   Typically used as part of the construction of a global default result handler for mutations.
@@ -188,6 +188,7 @@
 ```
   (-> env
     (update-errors-on-ui-component! ::mutation-error)
+    (rewrite-tempids!)
     (integrate-mutation-return-value!)
     (trigger-global-error-action!)
     (dispatch-ok-error-actions!))
@@ -460,15 +461,15 @@
       :result-action (fn[])}
       "
      [macro-env args]
-     (println "defmutation* ARGS to defmutation: " args)
+     ;(println "defmutation* ARGS to defmutation: " args)
      (let [conform!       (fn [element spec value]
                             (when-not (s/valid? spec value)
                               (throw (ana/error macro-env (str "Syntax error in " element ": " (s/explain-str spec value)))))
                             (s/conform spec value))
 
            {:keys [sym doc arglist sections]} (conform! "defmutation" ::mutation-args args)
-           _ (println "conformed mutation: " )
-           _ (do (log/spy sym ) (log/spy doc) (log/spy arglist) (log/spy sections))
+           ;_ (println "conformed mutation: " )
+           ;_ (do (log/spy sym ) (log/spy doc) (log/spy arglist) (log/spy sections))
 
            fqsym          (if (namespace sym)
                             sym
@@ -567,6 +568,9 @@
 (comment
   (macroexpand '(defmutation my-mutation [{my-param :my-key} ]
                   (remote [env2] true)
+                  (remote2 [_] false)
+                  (ok-action [_] (println "ok"))
+                  (error-action [_] (println "error"))
                   (action [{:keys [state]}]
                     (println "body"))))
   (defmutation my-mutation [{:keys [some-thing]}]

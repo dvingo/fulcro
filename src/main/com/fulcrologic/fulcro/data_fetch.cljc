@@ -143,7 +143,7 @@
   Removes any load marker, then either:
 
   - Runs the `ok-action` (if defined).
-  - Does normal post-processing (if the was no ok-action):
+  - Does normal post-processing (if there was no ok-action):
        - Merges the load result
        - Processes desired targets
        - Runs the post-mutation (if defined)

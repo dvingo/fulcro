@@ -149,6 +149,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
                                                   (result-handler result)))
                                               (remove-send! app remote-name combined-node-id combined-node-idx))
                            ::active?        true}]
+    (log/info "combine-sends, to-send: " to-send)
     (if (seq to-send)
       {::send-node  combined-node
        ::send-queue (into [] (concat active-nodes [combined-node] to-defer))}
@@ -835,8 +836,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
     tx
     {:keys [synchronous?] :as options}]
    [:com.fulcrologic.fulcro.application/app ::tx ::options => ::id]
-   ;(log/info "IN DEFAULT TX2: " tx)
-   (println "IN DEFAULT TX2: " tx)
+   (log/info "IN DEFAULT TX2: " tx)
    (if synchronous?
      (do
        (log/info "SYNCronous tx: " tx)

@@ -25,7 +25,7 @@
   (let [[k v] (if (seq? expr)
                 (ffirst expr)
                 (first expr))]
-    [(if (list? k) (first k) k) v]))
+    [(cond-> k (list? k) first) v]))
 
 (defn join? [x]
   #?(:cljs {:tag boolean})
@@ -49,9 +49,7 @@
 (defn join-key [expr]
   (cond
     (map? expr) (let [k (ffirst expr)]
-                  (if (list? k)
-                    (first k)
-                    (ffirst expr)))
+                  (cond-> k (list? k) first))
     (seq? expr) (join-key (first expr))
     :else expr))
 
