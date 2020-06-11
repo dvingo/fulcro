@@ -452,7 +452,14 @@
        (refresh [_] :a-key))))
 
 #?(:clj
-   (defn defmutation* [macro-env args]
+   (defn defmutation*
+     "Constructs the code for the implementation of a the m/mutate multimethod for the symbol of the mutation.
+     The multi-method should return a map of keywords to function for each section of the mutation.
+     ex:
+     {:action (fn[])
+      :result-action (fn[])}
+      "
+     [macro-env args]
      (println "defmutation* ARGS to defmutation: " args)
      (let [conform!       (fn [element spec value]
                             (when-not (s/valid? spec value)
