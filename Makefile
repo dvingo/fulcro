@@ -1,3 +1,4 @@
+
 tests:
 	yarn
 	npx shadow-cljs -A:dev compile ci-tests
@@ -6,3 +7,10 @@ tests:
 
 dev:
 	clojure -A:dev:test:clj-tests -J-Dguardrails.config=guardrails-test.edn -J-Dguardrails.enabled --watch --fail-fast --no-capture-output
+
+
+shadow-server:
+	yarn shadow-cljs server
+
+lcl:
+	yarn shadow-cljs watch todomvc workspaces

@@ -43,6 +43,7 @@
   #?(:cljs (:require-macros com.fulcrologic.fulcro.mutations))
   (:require
     #?(:clj [cljs.analyzer :as ana])
+    [clojure.pprint :as pprint]
     [clojure.spec.alpha :as s]
     [clojure.string :as str]
     [com.fulcrologic.fulcro.algorithms.data-targeting :as targeting]
@@ -61,20 +62,23 @@
 (>def ::env (s/keys :req-un [:com.fulcrologic.fulcro.application/app]))
 (>def ::returning comp/component-class?)
 
+
+
 #?(:clj
    (deftype Mutation [sym]
      IFn
-     (invoke [this]
-       (this {}))
-     (invoke [this args]
-       (list sym args)))
+     (invoke [this] (this {}))
+     (invoke [this args] (list sym args)))
    :cljs
    (deftype Mutation [sym]
      IFn
-     (-invoke [this]
-       (this {}))
-     (-invoke [this args]
-       (list sym args))))
+     (-invoke [this] (this {}))
+     (-invoke [this args] (list sym args))))
+
+(comment
+  ((Mutation. 5) 'args)
+  (= ((Mutation. 5)) ((->Mutation 5)))
+  )
 
 (>defn update-errors-on-ui-component!
   "A handler for mutation network results that will place an error, if detected in env, on the data at `ref`.
@@ -365,6 +369,13 @@
                             query (vary-meta #(merge (meta query) %)))]
         (assoc env :ast (eql/query->ast1 [{(list key params) updated-query}]))))))
 
+(comment
+  (= (-> (eql/query->ast [{(list 'do-it {:no "params"}) [:something :else]}]) :children first)
+    (eql/query->ast1 [{(list 'do-it {:no "params"}) [:something :else]}]))
+  ;(meta (vary-meta 'foo assoc :key :val))
+  ;(pprint)
+  )
+
 (defn with-target
   "Set's a target for the return value from the mutation to be merged into. This can be combined with returning to define
   a path to insert the new entry.
@@ -393,7 +404,10 @@
   (assoc-in env [:ast :params] params))
 
 (>defn with-response-type
-  "Modify the AST in env so that the request is sent such that an alternate low-level XHRIO response type is used.
+  "
+  #{:default :array-buffer :text :document}
+
+  Modify the AST in env so that the request is sent such that an alternate low-level XHRIO response type is used.
   Only works with HTTP remotes. See goog.net.XhrIO.  Supported response types are :default, :array-buffer,
   :text, and :document."
   [env response-type]
@@ -423,14 +437,29 @@
                             :arglist (fn [a] (and (vector? a) (= 1 (count a))))
                             :sections (s/* (s/or :handler ::handler)))))
 
+(comment
+  (s/def :my/var  (s/cat :e even?))
+  (s/def :my/var2  (s/or :e even?))
+  (s/conform :my/var [2])
+  (s/conform :my/var2 [2])
+
+  (s/conform ::mutation-args
+    '(my-mutation [{:keys [some-thing]}] (action [_] (println body)) (refresh [_] :a-key))
+    )
+  )
+
 #?(:clj
    (defn defmutation* [macro-env args]
-     (println "ARGS to defmutation: " args)
+     (println "defmutation* ARGS to defmutation: " args)
      (let [conform!       (fn [element spec value]
                             (when-not (s/valid? spec value)
                               (throw (ana/error macro-env (str "Syntax error in " element ": " (s/explain-str spec value)))))
                             (s/conform spec value))
+
            {:keys [sym doc arglist sections]} (conform! "defmutation" ::mutation-args args)
+           _ (println "conformed mutation: " )
+           _ (do (log/spy sym ) (log/spy doc) (log/spy arglist) (log/spy sections))
+
            fqsym          (if (namespace sym)
                             sym
                             (symbol (name (ns-name *ns*)) (name sym)))
@@ -528,4 +557,43 @@
   (macroexpand '(defmutation my-mutation [_]
                   (action [_]
                     (println "body"))))
+  (defmutation my-mutation [{:keys [some-thing]}]
+    (action [_]
+      (println "body"))
+    (refresh [_] :a-key))
+
+  (def my-mutation (com.fulcrologic.fulcro.mutations/->Mutation (quote com.fulcrologic.fulcro.mutations/my-mutation)))
+  (comment
+    (clojure.pprint/pprint (->Mutation 'hi))
+
+    )
+
+
+  (defmethod
+    com.fulcrologic.fulcro.mutations/mutate
+    (quote com.fulcrologic.fulcro.mutations/my-mutation)
+    [fulcro-mutation-env-symbol]
+    (let
+      [_ (-> fulcro-mutation-env-symbol :ast :params)]
+      {:action        (fn
+                        action
+                        [_]
+                        (binding [com.fulcrologic.fulcro.components/*after-render* true] (println "body"))
+                        nil),
+       :result-action (fn
+                        [env]
+                        (binding
+                          [com.fulcrologic.fulcro.components/*after-render* true]
+                          (when-let
+                            [default-action
+                             (com.fulcrologic.fulcro.algorithms.lookup/app-algorithm (:app env) :default-result-action!)]
+                            (default-action env))))})))
+
+(comment
+
+  (defmulti draw :shape)
+  (defmethod draw :circle [_] (println "Drawing a circle"))
+  (defmethod draw :square [_] (println "Drawing a changed square"))
+  (draw {:shape :square})
   )
+
