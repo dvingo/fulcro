@@ -22,6 +22,7 @@
     [edn-query-language.core :as eql]
     [taoensso.encore :as enc]
     [taoensso.timbre :as log]))
+(defn pprint-str [arg] (with-out-str (pprint arg)))
 
 (comment
   "
@@ -119,8 +120,8 @@ Are the queues actually queues or are they vectors? It appears that they are vec
    => (s/keys :opt [::send-node] :req [::send-queue])]
 
   (log/info "Line 121: Combine-sends for remote:" remote-name ": ", send-queue)
-  (pprint send-queue)
-  ;(log/info send-queue)
+  (log/info (pprint-str send-queue))
+  (log/info send-queue)
 
   (let [[active-nodes send-queue] (split-with ::active? send-queue)
         send-queue        (sort-queue-writes-before-reads (vec send-queue))
@@ -141,8 +142,8 @@ Are the queues actually queues or are they vectors? It appears that they are vec
         ;;; so I think instead of this, we invoke query->ast for each tx and put them
         ;; in a map {:txes
         to-send-combined  {:txes (mapv (comp futil/ast->query ::ast) send-queue)}
-        _                 (log/info "to-send combined: ")
-        _                 (pprint to-send-combined)
+        _                 (log/info "to-send combined: \n\n"
+                            (pprint-str to-send-combined))
         ast               (eql/query->ast combined-tx)
         combined-node-id  (tempid/uuid)
         combined-node-idx 0
@@ -156,8 +157,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
                                                 (when update-handler
                                                   (update-handler combined-result))))
                            ::result-handler (fn [{:keys [body] :as combined-result}]
-                                              (log/info "IN combined handler. body:")
-                                              (pprint body)
+                                              (log/info "IN combined handler. body:\n" (pprint-str body))
                                               ;; need to loop over combined results
                                               (doseq [[{::keys [ast result-handler]} index]
                                                       (partition 2 (interleave send-queue
@@ -808,7 +808,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
         explicit-refresh (requested-refreshes app new-queue)
         remotes-active?  (active-remotes new-queue remotes)]
     (log/info "in process-active-queue! after processing active queue: ")
-    ;(pprint new-queue)
+    (log/info (with-out-str (pprint new-queue)))
     ;(tx-status! app)
     (swap! state-atom assoc :com.fulcrologic.fulcro.application/active-remotes remotes-active?)
     (swap! runtime-atom assoc ::active-queue new-queue)

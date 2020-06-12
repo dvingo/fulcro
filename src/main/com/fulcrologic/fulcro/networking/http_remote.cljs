@@ -186,8 +186,9 @@
                  (assoc response :status-code 417 :status-text "body was either not transit or you have not installed the correct transit read/write handlers.")))
              response)))))))
 
-(defn extract-response
-  "Generate a response map from the status of the given xhrio object, which could be in a complete or error state."
+
+(defn create-response-map
+  "Create a response map from the xhrio, which is in a complete or error state."
   [tx request xhrio]
   [any? ::request ::xhrio => ::response]
   (try
@@ -227,7 +228,7 @@
   [response-middleware edn real-request xhrio]
   [::response-middleware any? ::request ::xhrio => ::response]
   (fn []
-    (let [r (extract-response edn real-request xhrio)]
+    (let [r (create-response-map edn real-request xhrio)]
       (log/info "response-extractor* edn" edn)
       (log/info "response-extractor* real-request" real-request)
 
@@ -327,8 +328,9 @@
      :transmit!       (fn transmit!
                         [{:keys [active-requests]}
                          {::txn/keys [ast txes result-handler update-handler] :as send-node}]
-                        (let [ ;edn              (futil/ast->query ast)
-                              edn txes
+                        ;; i think the remote layer should not be aware of the data ?
+                        ;;
+                        (let [edn (or txes (futil/ast->query ast))
                               ok-handler       (fn [result]
                                                  (log/info "NETWORK RESULT: ")
                                                  (pprint result)
@@ -368,7 +370,7 @@
                                       xhrio                (make-xhrio)
                                       {:keys [body headers url method response-type]} real-request
                                       http-verb            (-> (or method :post) name str/upper-case)
-                                      extract-response     #(extract-response body real-request xhrio)
+                                      extract-response     #(create-response-map body real-request xhrio)
                                       extract-response-mw  (response-extractor* response-middleware edn real-request xhrio)
                                       gc-network-resources (cleanup-routine* abort-id active-requests xhrio)
                                       progress-routine     (progress-routine* extract-response progress-handler)

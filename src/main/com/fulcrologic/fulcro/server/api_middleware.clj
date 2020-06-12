@@ -66,7 +66,7 @@
    any augment handlers that were indicated on top-level mutations/queries via
    `augment-response`."
   [query user-callback]
-  (log/info "handle-api-req, query: " query)
+  (log/info "handle-api-request, query: " query)
   (if (map? query)
     (let [queries (:txes query)
           _       (log/info "QUERIES : " queries)
@@ -85,20 +85,20 @@
           (do
             (log/info "SERVER RETURNING : " responses)
             (let [resp (reduce (fn [final-resp resp]
-                            (merge final-resp (apply-response-augmentations resp)))
-                    {} responses)]
+                                 ;;; todo this is most likely not correct.- need to merge multiple resp updates together correctly.
+                                 (merge final-resp (apply-response-augmentations resp)))
+                         {} responses)]
               (log/info "MERGEd: " resp)
               (merge {:status 200 :body {:txes responses}} resp))))))
-    ;(generate-response
-    ;  (let [parse-result (try
-    ;                       (user-callback query)
-    ;                       (catch Exception e
-    ;                         (log/error e "Parser threw an exception on" query)
-    ;                         e))]
-    ;    (if (instance? Throwable parse-result)
-    ;      {:status 500 :body "Internal server error. Parser threw an exception. See server logs for details."}
-    ;      (merge {:status 200 :body parse-result} (apply-response-augmentations parse-result)))))
-    ))
+    (generate-response
+      (let [parse-result (try
+                           (user-callback query)
+                           (catch Exception e
+                             (log/error e "Parser threw an exception on" query)
+                             e))]
+        (if (instance? Throwable parse-result)
+          {:status 500 :body "Internal server error. Parser threw an exception. See server logs for details."}
+          (merge {:status 200 :body parse-result} (apply-response-augmentations parse-result)))))))
 
 (defn reader
   "Create a transit reader. This reader can handler the tempid type.
