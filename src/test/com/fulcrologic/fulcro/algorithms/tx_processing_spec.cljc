@@ -1,22 +1,21 @@
 (ns com.fulcrologic.fulcro.algorithms.tx-processing-spec
   (:require
-    [clojure.string :as str]
-    [com.fulcrologic.fulcro.specs :as s+]
-    [fulcro-spec.core :refer [specification provided! when-mocking! assertions behavior when-mocking component]]
-    [clojure.spec.alpha :as s]
     [clojure.pprint :refer [pprint]]
-    [com.fulcrologic.fulcro.algorithms.tempid :refer [uuid]]
-    [com.fulcrologic.guardrails.core :refer [>defn =>]]
-    [com.fulcrologic.fulcro.application :as app]
-    [com.fulcrologic.fulcro.components :as comp]
-    [com.fulcrologic.fulcro.algorithms.tx-processing :as txn]
-    [com.fulcrologic.fulcro.algorithms.scheduling :as sched]
-    [com.fulcrologic.fulcro.application :as app :refer [fulcro-app]]
-    [com.fulcrologic.fulcro.mutations :as m :refer [defmutation]]
-    [edn-query-language.core :as eql]
+    [clojure.spec.alpha :as s]
+    [clojure.string :as str]
     [clojure.test :as test :refer [is are deftest]]
-    [taoensso.timbre :as log]
-    [com.fulcrologic.fulcro.algorithms.lookup :as ah]))
+    [com.fulcrologic.fulcro.algorithms.lookup :as ah]
+    [com.fulcrologic.fulcro.algorithms.scheduling :as sched]
+    [com.fulcrologic.fulcro.algorithms.tempid :refer [uuid]]
+    [com.fulcrologic.fulcro.algorithms.tx-processing :as txn]
+    [com.fulcrologic.fulcro.application :as app :refer [fulcro-app]]
+    [com.fulcrologic.fulcro.components :as comp]
+    [com.fulcrologic.fulcro.mutations :as m :refer [defmutation]]
+    [com.fulcrologic.fulcro.specs :as s+]
+    [com.fulcrologic.guardrails.core :refer [>defn =>]]
+    [edn-query-language.core :as eql]
+    [fulcro-spec.core :refer [specification provided! when-mocking! assertions behavior when-mocking component]]
+    [taoensso.timbre :as log]))
 
 (test/use-fixtures :once
   ;; NOTE: This makes submission processing immediate
@@ -29,6 +28,9 @@
 (defn mock-app
   ([params] (fulcro-app (assoc params :optimized-render! identity)))
   ([] (mock-app {:optimized-render! identity})))
+(comment
+  (tap> (mock-app))
+  )
 
 (>defn ->send
   ([id options]
@@ -43,6 +45,10 @@
     ::txn/result-handler (fn []) ::txn/error-handler (fn []) ::txn/update-handler (fn [])
     ::txn/active?        false
     ::txn/options        options}))
+
+(comment
+  (tap> (txn/tx-node '[(f) (g)] {:x 1}))
+  )
 
 (specification "tx-node"
   (let [n (txn/tx-node '[(f) (g)] {:x 1})
@@ -164,7 +170,7 @@
   (let [app (mock-app)]
     (when-mocking!
       (txn/schedule-activation! app) => nil
-      (txn/process-queue! app) => (assertions
+      (txn/process-active-queue! app) => (assertions
                                     "Processes the active queue."
                                     true => true)
 
@@ -192,7 +198,7 @@
           called (atom false)]
       (when-mocking!
         (txn/schedule-activation! app) => nil
-        (txn/process-queue! app) => nil
+        (txn/process-active-queue! app) => nil
 
         (comp/transact! app [(f {})])
         (comp/transact! app [(g {})])
@@ -208,7 +214,7 @@
     (let [app (mock-app)]
       (when-mocking!
         (txn/schedule-activation! app) => nil
-        (txn/process-queue! app) => (assertions
+        (txn/process-active-queue! app) => (assertions
                                       "Processes the active queue."
                                       true => true)
 
@@ -282,6 +288,7 @@
       (-> step2 ::txn/elements second ::txn/complete?) => #{:action :remote}
       "but that processing stops at the very next full-stack mutation"
       (-> step2 ::txn/elements (nth 2) ::txn/complete?) => #{:action})))
+
 
 (specification "run-actions!"
   (let [app     (mock-app)
@@ -901,7 +908,7 @@
                           (assoc (txn/tx-node `[(g {})]) ::txn/id (uuid 2))]]
         (swap! runtime-atom assoc ::txn/active-queue active-queue)
 
-        (txn/process-queue! app)
+        (txn/process-active-queue! app)
 
         (assertions
           "Add an active remotes key to app state"

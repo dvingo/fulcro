@@ -15,7 +15,7 @@
   (doseq [{:com.fulcrologic.fulcro.algorithms.tx-processing/keys [idx results dispatch] :as ele}
           (:com.fulcrologic.fulcro.algorithms.tx-processing/elements n)]
     (println "  Element " idx)
-    (println "  " (strks ele :com.fulcrologic.fulcro.algorithms.tx-processing/started? :com.fulcrologic.fulcro.algorithms.tx-processing/complete? :com.fulcrologic.fulcro.algorithms.tx-processing/original-ast-node))
+    (println "  " (strks ele (txr :started?) (txr :complete?) (txr :original-ast-node)))
     (println "  Dispatch: " (with-out-str (pprint dispatch)))
     (println "  Results: " (with-out-str (pprint results)))))
 

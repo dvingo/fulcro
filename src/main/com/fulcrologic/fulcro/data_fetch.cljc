@@ -19,17 +19,11 @@
     [taoensso.timbre :as log]
     [com.fulcrologic.fulcro.algorithms.lookup :as ah]))
 
-(>defn data-state?
-  "Is the given parameter a load marker?"
-  [state]
-  [any? => boolean?]
-  (and (map? state) (contains? state :status)))
-
 (>defn load-marker?
   "Is the given parameter a load marker?"
   [x]
   [any? => boolean?]
-  (data-state? x))
+  (and (map? x) (contains? x :status)))
 
 (>defn ready? "Is the given load marker ready for loading?" [marker]
   [(s/nilable map?) => boolean?]
@@ -148,8 +142,9 @@
        - Processes desired targets
        - Runs the post-mutation (if defined)
        - Runs the post-action (if defined)"
-  [{:keys [app result transmitted-ast] :as env} {:keys [query ok-action post-mutation post-mutation-params
-                                                        post-action target marker source-key] :as params}]
+  [{:keys [app result transmitted-ast] :as env}
+   {:keys [query ok-action post-mutation post-mutation-params
+           post-action target marker source-key] :as params}]
   (remove-load-marker! app marker)
 
   (let [env (assoc env :load-params params)]
@@ -158,8 +153,8 @@
         (log/debug "Skipping default merge and calling user-supplied ok-action.")
         (ok-action env))
       (let [{:keys [body transaction]} result
-            mark-query  (or transaction (futil/ast->query transmitted-ast))
-            body        (merge/mark-missing body mark-query)
+            mark-query (or transaction (futil/ast->query transmitted-ast))
+            body       (merge/mark-missing body mark-query)
             {:com.fulcrologic.fulcro.application/keys [state-atom]} app]
         (swap! state-atom (fn [s]
                             (cond-> (merge/merge* s query body)
@@ -204,14 +199,14 @@
         {:keys [remote query marker]} params
         remote-key (or remote :remote)]
     (log/debug "Loading " remote " query:" query)
-    (cond-> {:action        (fn [{:keys [app]}] (set-load-marker! app marker :loading))
-             :result-action (fn [{:keys [result app] :as env}]
-                              (let [remote-error? (ah/app-algorithm app :remote-error?)]
-                                (if (remote-error? result)
-                                  (load-failed! env params)
-                                  (finish-load! env params))))
-             remote-key     (fn [_]
-                              (eql/query->ast query))})))
+
+    {:action        (fn [{:keys [app]}] (set-load-marker! app marker :loading))
+     :result-action (fn [{:keys [result app] :as env}]
+                      (let [remote-error? (ah/app-algorithm app :remote-error?)]
+                        (if (remote-error? result)
+                          (load-failed! env params)
+                          (finish-load! env params))))
+     remote-key     (fn [_] (eql/query->ast query))}))
 
 (defn load!
   "Load data from the server.

@@ -14,6 +14,10 @@
    :extra-data    42}
   (dom/div "TODO"))
 
+(comment
+  (:fulcro$options A)
+  A)
+
 (defsc B [this props]
   {:ident         :person/id
    :query         [:person/id :person/name]

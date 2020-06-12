@@ -15,6 +15,7 @@
     [com.fulcrologic.fulcro.components :as comp]
     [com.fulcrologic.fulcro.specs]
     [com.fulcrologic.fulcro.inspect.inspect-client :as inspect :refer [ido ilet]]
+    [com.fulcrologic.fulcro.algorithms.tx-processing-debug :refer [tx-status!]]
     com.fulcrologic.fulcro.specs
     [com.fulcrologic.guardrails.core :refer [>defn => |]]
     [edn-query-language.core :as eql]
@@ -36,7 +37,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
 
   ")
 
-(declare schedule-activation! process-queue! remove-send!)
+(declare schedule-activation! process-active-queue! remove-send!)
 
 (>defn app->remotes
   "Returns the remotes map from an app"
@@ -249,7 +250,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
   (tx-node '[(hello-world)] {:my-opt 5})
   (tx-node '[(hello-world) (another-mutation {:arg 2})] {:my-opt 5})
   (tx-node '[(hello-world)] {:my-opt 5})
- )
+  )
 
 
 (>defn build-env
@@ -304,19 +305,31 @@ Are the queues actually queues or are they vectors? It appears that they are vec
     (schedule-activation! app 0)))
 
 (>defn activate-submissions!
-  "Activate all of the transactions that have been submitted since the last activation. After the items are activated
-  a single processing step will run for the active queue.
+  "
+  Moves all tx-nodes that are \"ready\" in the submission-queue into the active-queue,
+  then invokes process-queue!.
+
+  Activate all of the transactions that have been submitted since the last activation.
+  After the items are activated a single processing step will run for the active queue.
 
   Activation can be blocked by the tx-node options for things like waiting for the next render frame."
   [{:keys [:com.fulcrologic.fulcro.application/runtime-atom] :as app}]
   [:com.fulcrologic.fulcro.application/app => any?]
+  (log/info "in activate-submissions!")
+  (tx-status! app)
+  (log/info "the groups: "
+    (group-by (comp boolean :after-render? ::options) (::submission-queue @runtime-atom)))
   (let [{blocked true ready false} (group-by (comp boolean :after-render? ::options) (::submission-queue @runtime-atom))
         dispatched-nodes (mapv #(dispatch-elements % (build-env app %) m/mutate) ready)]
-    (swap! runtime-atom (fn [a]
-                          (-> a
-                            (update ::active-queue #(reduce conj % dispatched-nodes))
-                            (assoc ::submission-queue (vec blocked)))))
-    (process-queue! app)))
+    (log/info "dispatched-nodes: ")
+    (log/info dispatched-nodes)
+    (swap! runtime-atom
+      (fn [a]
+        (-> a
+          (update ::active-queue #(reduce conj % dispatched-nodes))
+          (assoc ::submission-queue (vec blocked)))))
+    (tx-status! app)
+    (process-active-queue! app)))
 
 (>defn schedule-activation!
   "Schedule activation of submitted transactions.
@@ -337,7 +350,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
    If `tm` is not supplied (in ms) it defaults to 10ms."
   ([app tm]
    [:com.fulcrologic.fulcro.application/app int? => any?]
-   (schedule! app ::queue-processing-scheduled? process-queue! tm))
+   (schedule! app ::queue-processing-scheduled? process-active-queue! tm))
   ([app]
    [:com.fulcrologic.fulcro.application/app => any?]
    (schedule-queue-processing! app 0)))
@@ -355,44 +368,61 @@ Are the queues actually queues or are they vectors? It appears that they are vec
   "Runs any incomplete and non-blocked optimistic operations on a node."
   [app {::keys [id elements] :as node}]
   [:com.fulcrologic.fulcro.application/app ::tx-node => ::tx-node]
-  (let [remotes      (app->remote-names app)
-        reduction    (reduce
-                       (fn [{:keys [done? new-elements] :as acc} element]
-                         (if done?
-                           (update acc :new-elements conj element)
-                           (let [{::keys [complete? dispatch original-ast-node idx]} element
-                                 {:keys [action]} dispatch
-                                 remote-set      (set/intersection remotes (set (keys dispatch)))
-                                 exec?           (and action (not (or done? (complete? :action))))
-                                 fully-complete? (and (or exec? (complete? :action)) (empty? (set/difference remote-set complete?)))
-                                 state-before    (-> app :com.fulcrologic.fulcro.application/state-atom deref)
-                                 updated-element (if exec? (-> element
-                                                             (assoc ::state-before-action state-before)
-                                                             (update ::complete? conj :action)) element)
-                                 done?           (not fully-complete?)
-                                 new-acc         {:done?        done?
-                                                  :new-elements (conj new-elements updated-element)}
-                                 env             (build-env app node {:ast original-ast-node})]
-                             (when exec?
-                               (try
-                                 (when action
-                                   (action env))
-                                 (catch #?(:cljs :default :clj Exception) e
-                                   (let [mutation-symbol (:dispatch-key original-ast-node)]
-                                     (log/error e "The `action` section of mutation" mutation-symbol "threw an exception."))))
-                               (ilet [tx (eql/ast->expr original-ast-node true)]
-                                 (inspect/optimistic-action-finished! app env {:tx-id        (str id "-" idx)
-                                                                               :state-before state-before
-                                                                               :tx           tx})))
-                             new-acc)))
-                       {:done? false :new-elements []}
-                       elements)
-        new-elements (:new-elements reduction)]
+  (log/info "advance-actions!")
+  (let [remotes
+        (app->remote-names app)
+
+        updated-elements
+        (reduce
+          (fn [{:keys [done? new-elements] :as acc} element]
+            (if done?
+              (update acc :new-elements conj element)
+
+              (let [{::keys [complete? dispatch original-ast-node idx]} element
+                    {:keys [action]} dispatch
+                    remote-set      (set/intersection remotes (set (keys dispatch)))
+                    exec?           (and action (not (or done? (complete? :action))))
+                    fully-complete? (and (or exec? (complete? :action)) (empty? (set/difference remote-set complete?)))
+                    state-before    (-> app :com.fulcrologic.fulcro.application/state-atom deref)
+                    updated-element (if exec?
+                                      (-> element
+                                        (assoc ::state-before-action state-before)
+                                        (update ::complete? conj :action))
+                                      element)
+                    done?           (not fully-complete?)
+                    env             (build-env app node {:ast original-ast-node})]
+                (when exec?
+                  (try
+                    (when action
+
+                      ;; actually run the local mutation
+                      (action env))
+
+                    (catch #?(:cljs :default :clj Exception) e
+                      (let [mutation-symbol (:dispatch-key original-ast-node)]
+                        (log/error e "The `action` section of mutation" mutation-symbol "threw an exception."))))
+                  (ilet [tx (eql/ast->expr original-ast-node true)]
+                    (inspect/optimistic-action-finished! app env {:tx-id        (str id "-" idx)
+                                                                  :state-before state-before
+                                                                  :tx           tx})))
+
+                {:done? done? :new-elements (conj new-elements updated-element)})))
+          {:done? false :new-elements []}
+          elements)
+
+        new-elements
+        (:new-elements updated-elements)]
     (assoc node ::elements new-elements)))
 
+;; run-actions-on-tx-node!
 (>defn run-actions!
+  "Reduce over the tx's elements and invokes their `action` section, if action is present from the mutation
+  and the action wasn't already invoked (it is not in the `complete?` set of dispatch from the tx-element).
+
+  Returns the tx-node after assoc'ing the updated elements to the passed in tx-node."
   [app {::keys [id elements] :as node}]
   [:com.fulcrologic.fulcro.application/app ::tx-node => ::tx-node]
+  (log/info "run-actions!" (::id node))
   (let [new-elements (reduce
                        (fn [new-elements element]
                          (let [{::keys [idx complete? dispatch original-ast-node]} element
@@ -406,7 +436,10 @@ Are the queues actually queues or are they vectors? It appears that they are vec
                                env          (build-env app node {:ast original-ast-node})]
                            (when exec?
                              (try
+
+                               ;; Actually invoke the action handler
                                (action env)
+
                                (catch #?(:cljs :default :clj Exception) e
                                  (log/error e "The `action` section threw an exception for mutation: " (:dispatch-key original-ast-node))))
                              (ilet [tx (eql/ast->expr original-ast-node true)]
@@ -444,6 +477,8 @@ Are the queues actually queues or are they vectors? It appears that they are vec
    queue so that remaining items can proceed, and schedules send processing."
   ([{:com.fulcrologic.fulcro.application/keys [runtime-atom] :as app} txn-id ele-idx remote result result-key]
    [:com.fulcrologic.fulcro.application/app ::id int? keyword? any? keyword? => any?]
+   (log/info "record-result! result-key: " result-key)
+   (log/info "record-result! result: " result)
    (let [active-queue (::active-queue @runtime-atom)
          txn-idx      (reduce
                         (fn [idx {:keys [::id]}]
@@ -452,7 +487,9 @@ Are the queues actually queues or are they vectors? It appears that they are vec
                             (inc idx)))
                         0
                         active-queue)
-         not-found?   (or (>= txn-idx (count active-queue)) (not= txn-id (::id (get active-queue txn-idx))))]
+         not-found?   (or (>= txn-idx (count active-queue))
+                        (not= txn-id (::id (get active-queue txn-idx))))]
+
      (if not-found?
        (log/error "Network result for" remote "does not have a valid node on the active queue!")
        (swap! runtime-atom assoc-in [::active-queue txn-idx ::elements ele-idx result-key remote] result))))
@@ -461,7 +498,8 @@ Are the queues actually queues or are they vectors? It appears that they are vec
    (record-result! app txn-id ele-idx remote result ::results)))
 
 (>defn compute-desired-ast-node
-  "Add the ::desired-ast-nodes and ::transmitted-ast-nodes for `remote` to the tx-element based on the dispatch for the `remote` of the original mutation."
+  "Add the ::desired-ast-nodes and ::transmitted-ast-nodes for `remote` to the tx-element based
+  on the dispatch for the `remote` of the original mutation."
   [app remote tx-node tx-element]
   [:com.fulcrologic.fulcro.application/app :com.fulcrologic.fulcro.application/remote-name ::tx-node ::tx-element => ::tx-element]
   (let [{::keys [dispatch original-ast-node state-before-action]} tx-element
@@ -577,10 +615,11 @@ Are the queues actually queues or are they vectors? It appears that they are vec
     tx-node))
 
 (>defn queue-sends!
-  "Finds any item(s) on the given node that are ready to be placed on the network queues and adds them. Non-optimistic
-  multi-element nodes will only queue one remote operation at a time."
+  "Finds any item(s) on the given node that are ready to be placed on the network queues and adds them.
+   Non-optimistic multi-element nodes will only queue one remote operation at a time."
   [app {:keys [::options ::elements] :as tx-node}]
   [:com.fulcrologic.fulcro.application/app ::tx-node => ::tx-node]
+  (log/info "queue-sends!")
   (let [optimistic? (boolean (:optimistic? options))]
     (schedule-sends! app 0)
     (if optimistic?
@@ -599,6 +638,8 @@ Are the queues actually queues or are they vectors? It appears that they are vec
   [app tx-node {::keys [results dispatch desired-ast-nodes transmitted-ast-nodes original-ast-node] :as tx-element} remote]
   [:com.fulcrologic.fulcro.application/app ::tx-node ::tx-element keyword? => ::tx-element]
   (schedule-queue-processing! app 0)
+  (log/info "dispatch-result! remote: " remote)
+  (log/info "dispatch-result! results: " results)
   (let [result  (get results remote)
         handler (get dispatch :result-action)]
     (when handler
@@ -656,15 +697,20 @@ Are the queues actually queues or are they vectors? It appears that they are vec
       elements)))
 
 (>defn process-tx-node!
+  "invoke run-actions! if optimistic tx, else advance-actions! on tx-node.
+  Then queue-sends, update-progress, distribute-results"
   [app {:keys [::options] :as tx-node}]
   [:com.fulcrologic.fulcro.application/app ::tx-node => (s/nilable ::tx-node)]
+  (log/info "process-tx-node!" (::id tx-node))
   (let [optimistic? (boolean (:optimistic? options))]
     (if (fully-complete? app tx-node)
       nil
       (-> tx-node
+        ;; do local actions
         (cond->>
           optimistic? (run-actions! app)
           (not optimistic?) (advance-actions! app))
+        ;; setup remote actions (sends)
         (->>
           (queue-sends! app)
           (update-progress! app)
@@ -715,12 +761,15 @@ Are the queues actually queues or are they vectors? It appears that they are vec
     #{}
     queue))
 
-(>defn process-queue!
-  "Run through the active queue and do a processing step."
+(>defn process-active-queue!
+  "
+  Invokes process-tx-node! for each node in the active queue.
+
+  Run through the active queue and do a processing step."
   [{:com.fulcrologic.fulcro.application/keys [state-atom runtime-atom] :as app}]
   [:com.fulcrologic.fulcro.application/app => any?]
   (let [new-queue        (reduce
-                           (fn *pstep [new-queue n]
+                           (fn process-step [new-queue n]
                              (if-let [new-node (process-tx-node! app n)]
                                (conj new-queue new-node)
                                new-queue))
@@ -731,6 +780,9 @@ Are the queues actually queues or are they vectors? It appears that they are vec
         schedule-render! (ah/app-algorithm app :schedule-render!)
         explicit-refresh (requested-refreshes app new-queue)
         remotes-active?  (active-remotes new-queue remotes)]
+    (log/info "in process-active-queue!")
+    (log/spy new-queue)
+    (tx-status! app)
     (swap! state-atom assoc :com.fulcrologic.fulcro.application/active-remotes remotes-active?)
     (swap! runtime-atom assoc ::active-queue new-queue)
     (when (seq explicit-refresh)
@@ -795,12 +847,19 @@ Are the queues actually queues or are they vectors? It appears that they are vec
 
 
 (comment
-  (:children (eql/query->ast '[(my-ns2/my-mutation1 {:arg 1 }) (my-ns/second-mutation )]))
+  (:children (eql/query->ast '[(my-ns2/my-mutation1 {:arg 1}) (my-ns/second-mutation)]))
 
   )
 
 (defn default-tx!
-  "Default (Fulcro-2 compatible) transaction submission. The options map can contain any additional options
+  "
+  - Creates a transaction node for the given eql transcation and conj's it to the submission
+  queue of the runtime atom.
+  - Adds the tx's parts that need to be refreshed to the runtime atom to-refresh and only-refresh
+  - invokes (schedule-activation! app)
+
+
+  Default (Fulcro-2 compatible) transaction submission. The options map can contain any additional options
   that might be used by the transaction processing (or UI refresh).
 
   Some that may be supported (depending on application settings):
@@ -837,6 +896,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
     {:keys [synchronous?] :as options}]
    [:com.fulcrologic.fulcro.application/app ::tx ::options => ::id]
    (log/info "IN DEFAULT TX2: " tx)
+   (log/info "options: " options)
    (if synchronous?
      (do
        (log/info "SYNCronous tx: " tx)
@@ -849,17 +909,20 @@ Are the queues actually queues or are they vectors? It appears that they are vec
        (let [{:keys [refresh only-refresh ref] :as options} (merge {:optimistic? true} options)
              follow-on-reads (into #{} (filter #(or (keyword? %) (eql/ident? %)) tx))
              node            (tx-node tx options)
-             _ (tap> "here")
-             _ (tap> node)
+             _               (tap> "here")
+             _               (tap> node)
 
              accumulate      (fn [r items] (into (set r) items))
              refresh         (cond-> (set refresh)
                                (seq follow-on-reads) (into follow-on-reads)
                                ref (conj ref))]
-         (swap! runtime-atom (fn [s] (cond-> (update s ::submission-queue (fn [v n] (conj (vec v) n)) node)
-                                       ;; refresh sets are cumulative because rendering is debounced
-                                       (seq refresh) (update :com.fulcrologic.fulcro.application/to-refresh accumulate refresh)
-                                       (seq only-refresh) (update :com.fulcrologic.fulcro.application/only-refresh accumulate only-refresh))))
+         (swap! runtime-atom
+           (fn [s]
+             (cond-> (update s ::submission-queue (fn [v n] (conj (vec v) n)) node)
+               ;; refresh sets are cumulative because rendering is debounced
+               (seq refresh) (update :com.fulcrologic.fulcro.application/to-refresh accumulate refresh)
+               (seq only-refresh) (update :com.fulcrologic.fulcro.application/only-refresh accumulate only-refresh))))
+         (tx-status! app)
          (::id node))))))
 
 (defn- abort-elements!
