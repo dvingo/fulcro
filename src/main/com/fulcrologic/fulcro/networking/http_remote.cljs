@@ -1,16 +1,17 @@
 (ns com.fulcrologic.fulcro.networking.http-remote
   (:refer-clojure :exclude [send])
   (:require
+    [clojure.pprint :refer [pprint]]
     [clojure.spec.alpha :as s]
     [clojure.string :as str]
     [cognitect.transit :as ct]
+    [com.fulcrologic.fulcro.algorithms.do-not-use :as futil]
     [com.fulcrologic.fulcro.algorithms.transit :as t]
     [com.fulcrologic.fulcro.algorithms.tx-processing :as txn]
-    [edn-query-language.core :as eql]
     [com.fulcrologic.guardrails.core :refer [>defn => >def]]
+    [edn-query-language.core :as eql]
     [goog.events :as events]
-    [taoensso.timbre :as log]
-    [com.fulcrologic.fulcro.algorithms.do-not-use :as futil])
+    [taoensso.timbre :as log])
   (:import [goog.net XhrIo EventType ErrorCode]))
 
 (>def ::method #{:post :get :delete :put :head :connect :options :trace :patch})
@@ -227,6 +228,9 @@
   [::response-middleware any? ::request ::xhrio => ::response]
   (fn []
     (let [r (extract-response edn real-request xhrio)]
+      (log/info "response-extractor* edn" edn)
+      (log/info "response-extractor* real-request" real-request)
+
       (try
         (response-middleware r)
         (catch :default e
@@ -245,7 +249,7 @@
 (defn ok-routine*
   "Returns a (fn [evt] ) that pulls the response, runs it through middleware, and reports
    the appropriate results to the raw-ok-handler, and progress-routine. If the middleware fails,
-   it will instaed report to the error-routine (which in turn will report to the raw error handler)"
+   it will instead report to the error-routine (which in turn will report to the raw error handler)"
   [progress-routine get-response-fn raw-ok-handler error-routine]
   [fn? fn? fn? fn? => any?]
   (fn [evt]
@@ -320,9 +324,14 @@
   [(s/keys :opt-un [::url ::request-middleware ::response-middleware ::make-xhrio]) => ::fulcro-remote]
   (merge options
     {:active-requests (atom {})
-     :transmit!       (fn transmit! [{:keys [active-requests]} {::txn/keys [ast result-handler update-handler] :as send-node}]
-                        (let [edn              (futil/ast->query ast)
+     :transmit!       (fn transmit!
+                        [{:keys [active-requests]}
+                         {::txn/keys [ast txes result-handler update-handler] :as send-node}]
+                        (let [ ;edn              (futil/ast->query ast)
+                              edn txes
                               ok-handler       (fn [result]
+                                                 (log/info "NETWORK RESULT: ")
+                                                 (pprint result)
                                                  (try
                                                    (result-handler result)
                                                    (catch :default e
@@ -345,37 +354,40 @@
                                                      (result-handler error))
                                                    (catch :default e
                                                      (log/error e "Error handler for remote" url "failed with an exception."))))]
+                          (log/info "EDN TO SEND: " edn)
                           (if-let [real-request (try
                                                   (request-middleware {:headers {} :body edn :url url :method :post})
                                                   (catch :default e
                                                     (log/error e "Send aborted due to middleware failure ")
                                                     nil))]
-                            (let [abort-id             (or
-                                                         (-> send-node ::txn/options ::txn/abort-id)
-                                                         (-> send-node ::txn/options :abort-id))
-                                  xhrio                (make-xhrio)
-                                  {:keys [body headers url method response-type]} real-request
-                                  http-verb            (-> (or method :post) name str/upper-case)
-                                  extract-response     #(extract-response body real-request xhrio)
-                                  extract-response-mw  (response-extractor* response-middleware edn real-request xhrio)
-                                  gc-network-resources (cleanup-routine* abort-id active-requests xhrio)
-                                  progress-routine     (progress-routine* extract-response progress-handler)
-                                  ok-routine           (ok-routine* progress-routine extract-response-mw ok-handler error-handler)
-                                  error-routine        (error-routine* extract-response-mw ok-routine progress-routine error-handler)
-                                  with-cleanup         (fn [f] (fn [evt] (try (f evt) (finally (gc-network-resources)))))]
-                              (when abort-id
-                                (swap! active-requests update abort-id (fnil conj #{}) xhrio))
-                              (when (and (legal-response-types response-type) (not= :default response-type))
-                                (.setResponseType ^js xhrio (get response-types response-type)))
-                              (when progress-handler
-                                (xhrio-enable-progress-events xhrio)
-                                (events/listen xhrio (.-DOWNLOAD_PROGRESS ^js EventType) #(progress-routine :receiving %))
-                                (events/listen xhrio (.-UPLOAD_PROGRESS ^js EventType) #(progress-routine :sending %)))
-                              (events/listen xhrio (.-SUCCESS ^js EventType) (with-cleanup ok-routine))
-                              (events/listen xhrio (.-ABORT ^js EventType) (with-cleanup #(ok-handler {:status-text   "Cancelled"
-                                                                                                       ::txn/aborted? true})))
-                              (events/listen xhrio (.-ERROR ^js EventType) (with-cleanup error-routine))
-                              (xhrio-send xhrio url http-verb body headers))
+
+                            (do (log/info " EDN AFTYER MIDDLEWARE: " real-request)
+                                (let [abort-id             (or
+                                                             (-> send-node ::txn/options ::txn/abort-id)
+                                                             (-> send-node ::txn/options :abort-id))
+                                      xhrio                (make-xhrio)
+                                      {:keys [body headers url method response-type]} real-request
+                                      http-verb            (-> (or method :post) name str/upper-case)
+                                      extract-response     #(extract-response body real-request xhrio)
+                                      extract-response-mw  (response-extractor* response-middleware edn real-request xhrio)
+                                      gc-network-resources (cleanup-routine* abort-id active-requests xhrio)
+                                      progress-routine     (progress-routine* extract-response progress-handler)
+                                      ok-routine           (ok-routine* progress-routine extract-response-mw ok-handler error-handler)
+                                      error-routine        (error-routine* extract-response-mw ok-routine progress-routine error-handler)
+                                      with-cleanup         (fn [f] (fn [evt] (try (f evt) (finally (gc-network-resources)))))]
+                                  (when abort-id
+                                    (swap! active-requests update abort-id (fnil conj #{}) xhrio))
+                                  (when (and (legal-response-types response-type) (not= :default response-type))
+                                    (.setResponseType ^js xhrio (get response-types response-type)))
+                                  (when progress-handler
+                                    (xhrio-enable-progress-events xhrio)
+                                    (events/listen xhrio (.-DOWNLOAD_PROGRESS ^js EventType) #(progress-routine :receiving %))
+                                    (events/listen xhrio (.-UPLOAD_PROGRESS ^js EventType) #(progress-routine :sending %)))
+                                  (events/listen xhrio (.-SUCCESS ^js EventType) (with-cleanup ok-routine))
+                                  (events/listen xhrio (.-ABORT ^js EventType) (with-cleanup #(ok-handler {:status-text   "Cancelled"
+                                                                                                           ::txn/aborted? true})))
+                                  (events/listen xhrio (.-ERROR ^js EventType) (with-cleanup error-routine))
+                                  (xhrio-send xhrio url http-verb body headers)))
                             (error-handler {:error :abort :error-text "Transmission was aborted because the request middleware returned nil or threw an exception"}))))
      :abort!          (fn abort! [this id]
                         (if-let [xhrios (get @(:active-requests this) id)]

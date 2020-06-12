@@ -199,12 +199,14 @@
   "
   [env]
   [::env => ::env]
-  (-> env
-    (update-errors-on-ui-component! ::mutation-error)
-    (rewrite-tempids!)
-    (integrate-mutation-return-value!)
-    (trigger-global-error-action!)
-    (dispatch-ok-error-actions!)))
+  ;; todo env
+  (let [{:keys [result]} env]
+    (-> env
+      (update-errors-on-ui-component! ::mutation-error)
+      (rewrite-tempids!)
+      (integrate-mutation-return-value!)
+      (trigger-global-error-action!)
+      (dispatch-ok-error-actions!))))
 
 (defn mutation-declaration? [expr] (= Mutation (type expr)))
 

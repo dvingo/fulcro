@@ -4,6 +4,7 @@
   such an override would be written, nor is it necessarily recommended since many of the desirable and built-in
   behaviors of Fulcro are codified here. "
   (:require
+    [clojure.pprint :refer [pprint]]
     [clojure.set :as set]
     [clojure.spec.alpha :as s]
     [com.fulcrologic.fulcro.algorithms.lookup :as ah]
@@ -114,39 +115,64 @@ Are the queues actually queues or are they vectors? It appears that they are vec
   "Takes a send queue and returns a map containing a new combined send node that can act as a single network request,
   along with the updated send queue."
   [app remote-name send-queue]
-  [:com.fulcrologic.fulcro.application/app :com.fulcrologic.fulcro.application/remote-name ::send-queue => (s/keys :opt [::send-node] :req [::send-queue])]
+  [:com.fulcrologic.fulcro.application/app :com.fulcrologic.fulcro.application/remote-name ::send-queue
+   => (s/keys :opt [::send-node] :req [::send-queue])]
+
+  (log/info "Line 121: Combine-sends for remote:" remote-name ": ", send-queue)
+  (pprint send-queue)
+  ;(log/info send-queue)
+
   (let [[active-nodes send-queue] (split-with ::active? send-queue)
         send-queue        (sort-queue-writes-before-reads (vec send-queue))
         id-to-send        (-> send-queue first ::id)
         options           (-> send-queue first ::options)
         [to-send to-defer] (split-with #(= id-to-send (::id %)) send-queue)
-        tx                (reduce
+        _                 (log/info "------to send:")
+        _                 (pprint to-send)
+        _                 (log/info "to defer:")
+        _                 (pprint to-defer)
+        ;; here is where we combine the transactions
+        combined-tx       (reduce
                             (fn [acc {:keys [::ast]}]
                               (let [tx (futil/ast->query ast)]
                                 (into acc tx)))
                             []
                             to-send)
-        ast               (eql/query->ast tx)
+        ;;; so I think instead of this, we invoke query->ast for each tx and put them
+        ;; in a map {:txes
+        to-send-combined  {:txes (mapv (comp futil/ast->query ::ast) send-queue)}
+        _                 (log/info "to-send combined: ")
+        _                 (pprint to-send-combined)
+        ast               (eql/query->ast combined-tx)
         combined-node-id  (tempid/uuid)
         combined-node-idx 0
         combined-node     {::id             combined-node-id
                            ::idx            combined-node-idx
                            ::ast            ast
+                           ::txes           to-send-combined
                            ::options        options
                            ::update-handler (fn [{:keys [body] :as combined-result}]
                                               (doseq [{::keys [update-handler]} to-send]
                                                 (when update-handler
                                                   (update-handler combined-result))))
                            ::result-handler (fn [{:keys [body] :as combined-result}]
-                                              (doseq [{::keys [ast result-handler]} to-send]
+                                              (log/info "IN combined handler. body:")
+                                              (pprint body)
+                                              ;; need to loop over combined results
+                                              (doseq [[{::keys [ast result-handler]} index]
+                                                      (partition 2 (interleave send-queue
+                                                                     (range (count send-queue))))]
+                                                (log/info "HANDLING result, index: " index)
                                                 (let [new-body (if (map? body)
-                                                                 (select-keys body (top-keys ast))
+                                                                 (get-in body [:txes index])
+                                                                 ;;;; (select-keys body (top-keys ast))
                                                                  body)
                                                       result   (assoc combined-result :body new-body)]
                                                   (inspect/ilet [{:keys [status-code body]} result]
                                                     (if (= 200 status-code)
                                                       (inspect/send-finished! app remote-name combined-node-id body)
                                                       (inspect/send-failed! app combined-node-id (str status-code))))
+
                                                   (result-handler result)))
                                               (remove-send! app remote-name combined-node-id combined-node-idx))
                            ::active?        true}]
@@ -166,6 +192,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
     (try
       (inspect/ilet [tx (futil/ast->query (::ast send-node))]
         (inspect/send-started! app remote-name (::id send-node) tx))
+      (log/info "SENDING NODE: " send-node)
       (transmit! remote send-node)
       (catch #?(:cljs :default :clj Exception) e
         (log/error e "Send threw an exception for tx:" (futil/ast->query (::ast send-node)))
@@ -182,7 +209,8 @@ Are the queues actually queues or are they vectors? It appears that they are vec
                                      :message     "Transmit missing on remote."}))))
 
 (>defn process-send-queues!
-  "Process the send queues against the remotes. Updates the send queues on the app and returns the updated send queues."
+  "Process the send queues against the remotes.
+   Updates the send queues on the app and returns the updated send queues."
   [{:com.fulcrologic.fulcro.application/keys [runtime-atom] :as app}]
   [:com.fulcrologic.fulcro.application/app => ::send-queues]
   (let [send-queues     (-> runtime-atom deref ::send-queues)
@@ -193,8 +221,8 @@ Are the queues actually queues or are they vectors? It appears that they are vec
                                   [p serial] (extract-parallel send-queue)
                                   front      (first serial)]
                               ;; parallel items are removed from the queues, since they don't block anything
-                              (doseq [item p]
-                                (net-send! app item remote))
+                              (doseq [item p] (net-send! app item remote))
+
                               ;; sequential items are kept in queue to prevent out-of-order operation
                               (if (::active? front)
                                 (assoc new-send-queues remote serial)
@@ -316,7 +344,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
   [{:keys [:com.fulcrologic.fulcro.application/runtime-atom] :as app}]
   [:com.fulcrologic.fulcro.application/app => any?]
   (log/info "in activate-submissions!")
-  (tx-status! app)
+  ;(tx-status! app)
   (log/info "the groups: "
     (group-by (comp boolean :after-render? ::options) (::submission-queue @runtime-atom)))
   (let [{blocked true ready false} (group-by (comp boolean :after-render? ::options) (::submission-queue @runtime-atom))
@@ -328,7 +356,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
         (-> a
           (update ::active-queue #(reduce conj % dispatched-nodes))
           (assoc ::submission-queue (vec blocked)))))
-    (tx-status! app)
+    ;(tx-status! app)
     (process-active-queue! app)))
 
 (>defn schedule-activation!
@@ -523,8 +551,6 @@ Are the queues actually queues or are they vectors? It appears that they are vec
         ast             (if (and desired-ast query-transform)
                           (query-transform desired-ast)
                           desired-ast)]
-    (log/debug "Desired tx from tx:" (eql/ast->expr desired-ast true))
-    (log/debug "Desired tx at network layer:" (eql/ast->expr ast true))
     (cond-> tx-element
       desired-ast (assoc-in [::desired-ast-nodes remote] desired-ast)
       ast (assoc-in [::transmitted-ast-nodes remote] ast))))
@@ -658,6 +684,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
   "Distribute results and mark the remotes for those elements as complete."
   [app tx-node {:keys [::results ::complete?] :as tx-element}]
   [:com.fulcrologic.fulcro.application/app ::tx-node ::tx-element => ::tx-element]
+  (log/info "distribute-element-results! results: " tx-element)
   (reduce
     (fn [new-element remote]
       (if (complete? remote)
@@ -780,9 +807,9 @@ Are the queues actually queues or are they vectors? It appears that they are vec
         schedule-render! (ah/app-algorithm app :schedule-render!)
         explicit-refresh (requested-refreshes app new-queue)
         remotes-active?  (active-remotes new-queue remotes)]
-    (log/info "in process-active-queue!")
-    (log/spy new-queue)
-    (tx-status! app)
+    (log/info "in process-active-queue! after processing active queue: ")
+    ;(pprint new-queue)
+    ;(tx-status! app)
     (swap! state-atom assoc :com.fulcrologic.fulcro.application/active-remotes remotes-active?)
     (swap! runtime-atom assoc ::active-queue new-queue)
     (when (seq explicit-refresh)
@@ -922,7 +949,7 @@ Are the queues actually queues or are they vectors? It appears that they are vec
                ;; refresh sets are cumulative because rendering is debounced
                (seq refresh) (update :com.fulcrologic.fulcro.application/to-refresh accumulate refresh)
                (seq only-refresh) (update :com.fulcrologic.fulcro.application/only-refresh accumulate only-refresh))))
-         (tx-status! app)
+         ;(tx-status! app)
          (::id node))))))
 
 (defn- abort-elements!
