@@ -251,7 +251,7 @@
      are processed in Fulcro.  Calls to `comp/transact!` will come through this algorithm.
    * `:abort-transaction!` - The function that can abort submitted transactions. Must be provided if you override
      `:submit-transaction!`, since the two are related.
-   * `:combine-txes?` - A boolean indicating if multiple transactions to the same remote made during the same thread exection should be
+   * `:combine-txes?` - A boolean indicating if multiple transactions to the same remote made during the same thread of execution should be
       sent in one network request. Defaults to false."
   ([] (fulcro-app {}))
   ([{:keys [props-middleware
