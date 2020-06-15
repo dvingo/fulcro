@@ -322,7 +322,6 @@
     {:active-requests (atom {})
      :transmit!       (fn transmit! [{:keys [active-requests]} {::txn/keys [ast txes result-handler update-handler] :as send-node}]
                         (let [edn              (or txes (futil/ast->query ast))
-                              _                (log/info "transmit!: edn: " edn)
                               ok-handler       (fn [result]
                                                  (try
                                                    (result-handler result)

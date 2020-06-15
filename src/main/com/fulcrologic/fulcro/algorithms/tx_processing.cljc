@@ -105,10 +105,10 @@
         id-to-send        (-> send-queue first ::id)
         options           (-> send-queue first ::options)
         [to-send to-defer] (split-with #(= id-to-send (::id %)) send-queue)
-        combine-txes?     (:com.fulcrologic.fulcro.application/combine-txes? app)
-        _ (log/info "combine txes? " combine-txes?)
+        combine-txes?     (-> app :com.fulcrologic.fulcro.application/config :combine-txes?)
+        _                 (log/info "combine txes? " combine-txes?)
         to-send-combined  (if combine-txes? {:txes (mapv (comp futil/ast->query ::ast) send-queue)})
-        _ (log/info "to-send-combined: " to-send-combined)
+        _                 (log/info "to-send-combined: " to-send-combined)
         tx                (reduce
                             (fn [acc {:keys [::ast]}]
                               (let [tx (futil/ast->query ast)]
@@ -159,21 +159,6 @@
 
                                                     (result-handler result))))
                                               (remove-send! app remote-name combined-node-id combined-node-idx))
-
-                           ;::result-handler (fn [{:keys [body] :as combined-result}]
-                           ;                   (doseq [{::keys [ast result-handler]} to-send]
-                           ;                     (let [new-body (if (map? body)
-                           ;                                      (select-keys body (top-keys ast))
-                           ;                                      body)
-                           ;                           result   (assoc combined-result :body new-body)]
-                           ;
-                           ;                       (inspect/ilet [{:keys [status-code body]} result]
-                           ;                         (if (= 200 status-code)
-                           ;                           (inspect/send-finished! app remote-name combined-node-id body)
-                           ;                           (inspect/send-failed! app combined-node-id (str status-code))))
-                           ;
-                           ;                       (result-handler result)))
-                           ;                   (remove-send! app remote-name combined-node-id combined-node-idx))
                            ::active?        true}]
     (if (seq to-send)
       {::send-node  combined-node
