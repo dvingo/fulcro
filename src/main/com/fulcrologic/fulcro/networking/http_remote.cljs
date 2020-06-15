@@ -276,7 +276,7 @@
   [get-response ok-routine progress-routine raw-error-handler]
   [fn? fn? fn? fn? => fn?]
   (fn [evt]
-    (let [r (get-response)]                                 ; middleware can rewrite to be ok...
+    (let [r (get-response)] ; middleware can rewrite to be ok...
       (progress-routine :failed evt)
       (if (= 200 (:status-code r))
         (ok-routine evt)
@@ -320,8 +320,9 @@
   [(s/keys :opt-un [::url ::request-middleware ::response-middleware ::make-xhrio]) => ::fulcro-remote]
   (merge options
     {:active-requests (atom {})
-     :transmit!       (fn transmit! [{:keys [active-requests]} {::txn/keys [ast result-handler update-handler] :as send-node}]
-                        (let [edn              (futil/ast->query ast)
+     :transmit!       (fn transmit! [{:keys [active-requests]} {::txn/keys [ast txes result-handler update-handler] :as send-node}]
+                        (let [edn              (or txes (futil/ast->query ast))
+                              _                (log/info "transmit!: edn: " edn)
                               ok-handler       (fn [result]
                                                  (try
                                                    (result-handler result)

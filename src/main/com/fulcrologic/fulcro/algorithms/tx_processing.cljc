@@ -10,7 +10,7 @@
     [com.fulcrologic.fulcro.algorithms.tempid :as tempid]
     [com.fulcrologic.fulcro.algorithms.denormalize :as fdn]
     [com.fulcrologic.fulcro.algorithms.do-not-use :as futil]
-    [com.fulcrologic.fulcro.algorithms.scheduling :as sched :refer [schedule!]]
+    [com.fulcrologic.fulcro.algorithms.scheduling :refer [schedule!]]
     [com.fulcrologic.fulcro.mutations :as m]
     [com.fulcrologic.fulcro.components :as comp]
     [com.fulcrologic.fulcro.specs]
@@ -99,11 +99,16 @@
   along with the updated send queue."
   [app remote-name send-queue]
   [:com.fulcrologic.fulcro.application/app :com.fulcrologic.fulcro.application/remote-name ::send-queue => (s/keys :opt [::send-node] :req [::send-queue])]
+  (log/info "Combine sends")
   (let [[active-nodes send-queue] (split-with ::active? send-queue)
         send-queue        (sort-queue-writes-before-reads (vec send-queue))
         id-to-send        (-> send-queue first ::id)
         options           (-> send-queue first ::options)
         [to-send to-defer] (split-with #(= id-to-send (::id %)) send-queue)
+        combine-txes?     (:com.fulcrologic.fulcro.application/combine-txes? app)
+        _ (log/info "combine txes? " combine-txes?)
+        to-send-combined  (if combine-txes? {:txes (mapv (comp futil/ast->query ::ast) send-queue)})
+        _ (log/info "to-send-combined: " to-send-combined)
         tx                (reduce
                             (fn [acc {:keys [::ast]}]
                               (let [tx (futil/ast->query ast)]
@@ -115,24 +120,60 @@
         combined-node-idx 0
         combined-node     {::id             combined-node-id
                            ::idx            combined-node-idx
+                           ::txes           to-send-combined
                            ::ast            ast
                            ::options        options
-                           ::update-handler (fn [{:keys [body] :as combined-result}]
+                           ::update-handler (fn [combined-result]
                                               (doseq [{::keys [update-handler]} to-send]
                                                 (when update-handler
                                                   (update-handler combined-result))))
+
                            ::result-handler (fn [{:keys [body] :as combined-result}]
-                                              (doseq [{::keys [ast result-handler]} to-send]
-                                                (let [new-body (if (map? body)
-                                                                 (select-keys body (top-keys ast))
-                                                                 body)
-                                                      result   (assoc combined-result :body new-body)]
-                                                  (inspect/ilet [{:keys [status-code body]} result]
-                                                    (if (= 200 status-code)
-                                                      (inspect/send-finished! app remote-name combined-node-id body)
-                                                      (inspect/send-failed! app combined-node-id (str status-code))))
-                                                  (result-handler result)))
+                                              (if combine-txes?
+                                                (doseq [[{::keys [result-handler]} index]
+                                                        (partition 2 (interleave send-queue
+                                                                       (range (count send-queue))))]
+                                                  (let [new-body (if (map? body)
+                                                                   ;(select-keys body (top-keys ast))
+                                                                   (get-in body [:txes index])
+                                                                   body)
+                                                        result   (assoc combined-result :body new-body)]
+
+                                                    (inspect/ilet [{:keys [status-code body]} result]
+                                                      (if (= 200 status-code)
+                                                        (inspect/send-finished! app remote-name combined-node-id body)
+                                                        (inspect/send-failed! app combined-node-id (str status-code))))
+
+                                                    (result-handler result)))
+
+                                                (doseq [{::keys [ast result-handler]} to-send]
+                                                  (let [new-body (if (map? body)
+                                                                   (select-keys body (top-keys ast))
+                                                                   body)
+                                                        result   (assoc combined-result :body new-body)]
+
+                                                    (inspect/ilet [{:keys [status-code body]} result]
+                                                      (if (= 200 status-code)
+                                                        (inspect/send-finished! app remote-name combined-node-id body)
+                                                        (inspect/send-failed! app combined-node-id (str status-code))))
+
+                                                    (result-handler result))))
                                               (remove-send! app remote-name combined-node-id combined-node-idx))
+
+                           ;::result-handler (fn [{:keys [body] :as combined-result}]
+                           ;                   (doseq [{::keys [ast result-handler]} to-send]
+                           ;                     (let [new-body (if (map? body)
+                           ;                                      (select-keys body (top-keys ast))
+                           ;                                      body)
+                           ;                           result   (assoc combined-result :body new-body)]
+                           ;
+                           ;                       (inspect/ilet [{:keys [status-code body]} result]
+                           ;                         (if (= 200 status-code)
+                           ;                           (inspect/send-finished! app remote-name combined-node-id body)
+                           ;                           (inspect/send-failed! app combined-node-id (str status-code))))
+                           ;
+                           ;                       (result-handler result)))
+                           ;                   (remove-send! app remote-name combined-node-id combined-node-idx))
                            ::active?        true}]
     (if (seq to-send)
       {::send-node  combined-node
@@ -144,7 +185,7 @@
   if the remote itself throws exceptions."
   [app send-node remote-name]
   [:com.fulcrologic.fulcro.application/app ::send-node :com.fulcrologic.fulcro.application/remote-name => any?]
-  (enc/if-let [remote    (get (app->remotes app) remote-name)
+  (enc/if-let [remote (get (app->remotes app) remote-name)
                transmit! (get remote :transmit!)]
     (try
       (inspect/ilet [tx (futil/ast->query (::ast send-node))]

@@ -65,15 +65,52 @@
    any augment handlers that were indicated on top-level mutations/queries via
    `augment-response`."
   [query query-processor]
-  (generate-response
-    (let [parse-result (try
-                         (query-processor query)
-                         (catch Exception e
-                           (log/error e "Parser threw an exception on" query)
-                           e))]
-      (if (instance? Throwable parse-result)
-        {:status 500 :body "Internal server error. Parser threw an exception. See server logs for details."}
-        (merge {:status 200 :body parse-result} (apply-response-augmentations parse-result))))))
+
+  (if (map? query)
+    (let [queries (:txes query)
+          _       (log/info "QUERIES : " queries)
+          responses
+                  (mapv
+                    (fn [q]
+                      (try
+                        (query-processor q)
+                        (catch Exception e (log/error e "Parser threw an exception on" q) e)))
+                    queries)]
+      (log/info "STEP2 calling generate-response")
+
+      (generate-response
+        (if (every? #(instance? Throwable %) responses)
+          {:status 500 :body "Internal server error. Parser threw an exception. See server logs for details."}
+          (do
+            (log/info "SERVER RETURNING : " responses)
+            (let [resp (reduce (fn [final-resp resp]
+                                 ;;; todo this is most likely not correct.- need to merge multiple resp updates together correctly.
+                                 (merge final-resp (apply-response-augmentations resp)))
+                         {} responses)]
+              (log/info "MERGED response: " resp)
+              (merge {:status 200 :body {:txes responses}} resp))))))
+    (generate-response
+      (let [parse-result (try
+                           (query-processor query)
+                           (catch Exception e
+                             (log/error e "Parser threw an exception on" query)
+                             e))]
+        (if (instance? Throwable parse-result)
+          {:status 500 :body "Internal server error. Parser threw an exception. See server logs for details."}
+          (merge {:status 200 :body parse-result} (apply-response-augmentations parse-result))))))
+
+
+
+  ;(generate-response
+  ;  (let [parse-result (try
+  ;                       (query-processor query)
+  ;                       (catch Exception e
+  ;                         (log/error e "Parser threw an exception on" query)
+  ;                         e))]
+  ;    (if (instance? Throwable parse-result)
+  ;      {:status 500 :body "Internal server error. Parser threw an exception. See server logs for details."}
+  ;      (merge {:status 200 :body parse-result} (apply-response-augmentations parse-result)))))
+  )
 
 (defn reader
   "Create a transit reader. This reader can handler the tempid type.
