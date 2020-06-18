@@ -77,8 +77,8 @@
       (generate-response
         (if (every? #(instance? Throwable %) responses)
           {:status 500 :body "Internal server error. Parser threw an exception. See server logs for details."}
-          (merge {:status 200 :body responses}
-            (reduce (fn [a b] (apply-response-augmentations b)) responses)))))
+          (let [http-resp (reduce (fn [a b] (apply-response-augmentations b)) {} responses)]
+            (merge {:status 200 :body responses} http-resp)))))
     (generate-response
       (let [parse-result (try
                            (query-processor query)
