@@ -133,10 +133,7 @@
                                                 (doseq [[{::keys [result-handler]} index]
                                                         (partition 2 (interleave send-queue
                                                                        (range (count send-queue))))]
-                                                  (let [new-body (if (map? body)
-                                                                   ;(select-keys body (top-keys ast))
-                                                                   (get-in body [:txes index])
-                                                                   body)
+                                                  (let [new-body (get body index)
                                                         result   (assoc combined-result :body new-body)]
 
                                                     (inspect/ilet [{:keys [status-code body]} result]

@@ -77,11 +77,8 @@
       (generate-response
         (if (every? #(instance? Throwable %) responses)
           {:status 500 :body "Internal server error. Parser threw an exception. See server logs for details."}
-          (let [resp (reduce (fn [final-resp resp]
-                               ;;; todo this is most likely not correct.- need to merge multiple resp updates together correctly.
-                               (merge final-resp (apply-response-augmentations resp)))
-                       {} responses)]
-            (merge {:status 200 :body {:txes responses}} resp)))))
+          (merge {:status 200 :body responses}
+            (reduce (fn [a b] (apply-response-augmentations b)) responses)))))
     (generate-response
       (let [parse-result (try
                            (query-processor query)
