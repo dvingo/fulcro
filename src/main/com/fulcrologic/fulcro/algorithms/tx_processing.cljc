@@ -99,16 +99,13 @@
   along with the updated send queue."
   [app remote-name send-queue]
   [:com.fulcrologic.fulcro.application/app :com.fulcrologic.fulcro.application/remote-name ::send-queue => (s/keys :opt [::send-node] :req [::send-queue])]
-  (log/info "Combine sends")
   (let [[active-nodes send-queue] (split-with ::active? send-queue)
         send-queue        (sort-queue-writes-before-reads (vec send-queue))
         id-to-send        (-> send-queue first ::id)
         options           (-> send-queue first ::options)
         [to-send to-defer] (split-with #(= id-to-send (::id %)) send-queue)
         combine-txes?     (-> app :com.fulcrologic.fulcro.application/config :combine-txes?)
-        _                 (log/info "combine txes? " combine-txes?)
         to-send-combined  (if combine-txes? {:txes (mapv (comp futil/ast->query ::ast) send-queue)})
-        _                 (log/info "to-send-combined: " to-send-combined)
         tx                (reduce
                             (fn [acc {:keys [::ast]}]
                               (let [tx (futil/ast->query ast)]
