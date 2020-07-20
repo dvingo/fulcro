@@ -181,7 +181,7 @@
                        response (assoc response :body new-body)]
                    response))
                (catch :default e
-                 (log/warn "Transit decode failed!")
+                 (log/warn "Transit decode failed!" e)
                  (assoc response :status-code 417 :status-text "body was either not transit or you have not installed the correct transit read/write handlers.")))
              response)))))))
 
